@@ -12,11 +12,7 @@ from raytrax.scene import contains
 
 
 def emit_from_volume(scene, mesh_geometry):
-    return sources.Sources(
-        cell_power=jnp.asarray(mesh_geometry.cells.volume),
-        face_power=jnp.zeros(0),
-        face=jnp.zeros(0, dtype=int),
-    )
+    return sources.build(mesh_geometry.cells.volume)
 
 
 def uniform_boundary(kind, reflectivity=1.0):
@@ -145,3 +141,28 @@ class TestDiffuseReflection:
         emitted = float(mesh_geometry.cells.volume.sum())
         assert float(deposit.faces.sum()) == approx(0.0)
         assert float(deposit.cells.sum()) == approx(emitted, rel=2e-3)
+
+
+class TestRefill:
+    """Refilling dead lanes must change only the cost, never the answer."""
+
+    @pytest.mark.parametrize("lanes,interval", [(20_000, 1), (5_000, 8), (2_000, 16)])
+    def test_refilled_trace_launches_its_full_budget(self, lanes, interval):
+        """In a sealed box every launched ray deposits its whole quantum, so the
+        deposited total is exact evidence that the budget was spent exactly."""
+        blocks, vertices = brick((3, 3, 3))
+        _, mesh_geometry, scene = make(blocks, vertices)
+        source = sources.build(mesh_geometry.cells.volume)
+
+        _, deposit = transport.trace(
+            jax.random.key(0),
+            scene,
+            LinearPath(),
+            uniform_boundary(Kind.ABSORB),
+            jnp.full(scene.num_cells, 1.0),
+            source,
+            num_rays=20_000,
+            lanes=lanes,
+            refill_interval=interval,
+        )
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)

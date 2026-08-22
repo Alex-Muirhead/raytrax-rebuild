@@ -38,11 +38,7 @@ def test_tangent_slab():
     )
 
     hot = np.flatnonzero(groups.face_group == groups.index("xlo"))
-    source = sources.Sources(
-        cell_power=jnp.zeros(mesh_topology.num_cells),
-        face_power=jnp.asarray(mesh_geometry.faces.area[hot]),
-        face=jnp.asarray(hot),
-    )
+    source = sources.build(jnp.zeros(mesh_topology.num_cells), mesh_geometry.faces.area[hot], hot)
 
     key_rays, key_march = jax.random.split(jax.random.key(0))
     state, cell = jax.vmap(sources.sample, in_axes=(0, None, None))(jax.random.split(key_rays, num_rays), source, scene)

@@ -29,16 +29,33 @@ def sample_face_point(key, scene: Scene, face) -> Float[Array, " ndim"]:
 class Sources(eqx.Module):
     """Unnormalised emitted power from cell volumes and from boundary faces.
 
-    Both are in the same units so a single draw can choose between them.
+    Both are in the same units so a single draw can choose between them. The
+    cumulative distribution is precomputed: drawing by `searchsorted` is
+    logarithmic in the number of emitters, where weighted `choice` is linear,
+    and refilling dead lanes redraws often enough for that to dominate.
     """
 
     cell_power: Float[Array, " ncell"]
     face_power: Float[Array, " nemit"]
     face: Int[Array, " nemit"]
+    cumulative: Float[Array, " nemitter"]
+    total: Float[Array, ""]
 
-    @property
-    def total(self) -> Float[Array, ""]:
-        return self.cell_power.sum() + self.face_power.sum()
+
+def build(cell_power, face_power=None, face=None) -> Sources:
+    cell_power = jnp.asarray(cell_power)
+    face_power = jnp.zeros(0) if face_power is None else jnp.asarray(face_power)
+    face = jnp.zeros(0, dtype=int) if face is None else jnp.asarray(face)
+
+    power = jnp.concatenate([cell_power, face_power])
+    total = power.sum()
+    return Sources(
+        cell_power=cell_power,
+        face_power=face_power,
+        face=face,
+        cumulative=jnp.cumulative_sum(power) / total,
+        total=total,
+    )
 
 
 def sample(key, sources: Sources, scene: Scene) -> tuple[RayState, Int[Array, ""]]:
@@ -50,20 +67,19 @@ def sample(key, sources: Sources, scene: Scene) -> tuple[RayState, Int[Array, ""
     key_source, key_point, key_direction = jax.random.split(key, 3)
     num_cells = sources.cell_power.shape[0]
 
+    draw = jax.random.uniform(key_source)
+    source = jnp.minimum(jnp.searchsorted(sources.cumulative, draw), sources.cumulative.shape[0] - 1)
+
     # Shapes are static, so a volume-only problem never pays for -- or indexes
     # into -- the surface branch.
     if sources.face_power.shape[0] == 0:
-        cell = jax.random.choice(key_source, num_cells, p=sources.cell_power / sources.cell_power.sum())
         return RayState(
-            position=sample_cell_point(key_point, scene, cell),
+            position=sample_cell_point(key_point, scene, source),
             tangent=sphere(key_direction, scene.dim),
             travel=jnp.zeros(()),
-        ), cell
+        ), source
 
-    power = jnp.concatenate([sources.cell_power, sources.face_power])
-    source = jax.random.choice(key_source, power.shape[0], p=power / power.sum())
     from_surface = source >= num_cells
-
     cell = jnp.where(from_surface, 0, source)
     face = sources.face[jnp.where(from_surface, source - num_cells, 0)]
 
