@@ -18,7 +18,9 @@ visualisation = ["pyvista[all]>=0.46.4"]
 
 [dependency-groups]
 dev = [
+    "gmsh>=4.15.1",
     "marimo>=0.20.4",
+    "matplotlib>=3.10",
     "pyrefly>=0.57.1",
     "pytest>=9.0.2",
     "ruff>=0.15.7",
@@ -35,6 +37,10 @@ line-length = 120
 [tool.ruff.lint]
 # jaxtyping needs string annotations kept intact
 ignore = ["F722", "UP037"]
+
+[tool.ruff.lint.per-file-ignores]
+# marimo cells end in a bare `return` that declares the cell's outputs
+"examples/*.py" = ["PLR1711"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

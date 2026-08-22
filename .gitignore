@@ -16,6 +16,7 @@ wheels/
 # Big files
 *.msh
 *.vtk
+*.vtu
 
 # Doc files from typ
 *.pdf

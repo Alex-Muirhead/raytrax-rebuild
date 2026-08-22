@@ -2193,7 +2193,9 @@ visualisation = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "gmsh" },
     { name = "marimo" },
+    { name = "matplotlib" },
     { name = "pyrefly" },
     { name = "pytest" },
     { name = "ruff" },
@@ -2214,7 +2216,9 @@ provides-extras = ["mesh-generation", "visualisation"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "gmsh", specifier = ">=4.15.1" },
     { name = "marimo", specifier = ">=0.20.4" },
+    { name = "matplotlib", specifier = ">=3.10" },
     { name = "pyrefly", specifier = ">=0.57.1" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "ruff", specifier = ">=0.15.7" },
