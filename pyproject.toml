@@ -1,0 +1,40 @@
+[project]
+name = "raytrax"
+version = "0.1.0"
+description = "Radiation Transport (X)ccelerator"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "equinox>=0.13.2",
+    "jax[cuda12]>=0.8.1",
+    "jaxtyping>=0.3.3",
+    "meshio>=5.3.5",
+    "numpy>=2.3.4",
+]
+
+[project.optional-dependencies]
+mesh-generation = ["gmsh>=4.15.1"]
+visualisation = ["pyvista[all]>=0.46.4"]
+
+[dependency-groups]
+dev = [
+    "marimo>=0.20.4",
+    "pyrefly>=0.57.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.7",
+    "scipy>=1.16.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# jaxtyping needs string annotations kept intact
+ignore = ["F722", "UP037"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
