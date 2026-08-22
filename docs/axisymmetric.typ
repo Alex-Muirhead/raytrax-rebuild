@@ -13,7 +13,10 @@ quadratic it produces factors through the ray's two asymptotes, which determine
 the crossing completely: the trace's intersections with a face plane follow from
 where the two asymptotes meet that plane, and from nothing else.
 
-Nothing here is implemented yet. #ref(<seams>) lists the seams it needs.
+The crossing is not implemented yet. The ray state it steps through is: the
+planar mode already carries the reduced state #ref(<seams>) describes, so what
+remains is #ref(<crossing>) below and the geometry weights of
+#ref(<geometry-work>).
 
 == Geometry
 
@@ -33,6 +36,11 @@ solve is always local to the cell. Write $x_0$, $arrow(p)_0$,
 $r_0 = |arrow(p)_0|$ and $m := arrow(p)_0 dot arrow(e)$. Then
 
 $ x(t) = x_0 + d_x t, quad quad r(t)^2 = u t^2 + 2 m t + r_0^2 $
+
+Differentiating the second gives $r dot(r) = u t + m$, so $m = r_0 dot(r)_0$.
+Both coefficients are therefore readable from the ray state as the march carries
+it, with no dot product to form; #ref(<seams>) makes that the reason the state
+looks the way it does.
 
 === It is a hyperbola
 
@@ -293,41 +301,56 @@ untouched.
 
 == Fitting the existing code <seams>
 
-The ray stays a straight 3D line throughout; the hyperbola appears only inside
-`crossing`. Three consequences, all favourable:
+The ray is a straight 3D line, but nothing stores it as one. `RayState` carries
+the meridional position $(x, r)$ and a #emph[non-unit] tangent, being the
+meridional velocity of the ray parametrised by its 3D arc length:
 
-- `advance` is `position += t * tangent`. Exact, with no integration drift.
-- `travel` accumulates $t$, which #emph[is] the true 3D path length. So
-  `transport.step`'s $exp(-kappa s)$ needs no correction factor at all.
-  Axisymmetric is simpler here than planar, which does need one.
-- Reflection off a wall is genuinely 3D and falls out of the existing formula.
+$ arrow(tau) = (d_x, dot(r)), quad quad |arrow(tau)|^2 = 1 - L^2/r^2 $
 
-=== The 2D-mesh, 3D-ray mismatch
+where $L = |arrow(p) times arrow(e)|$ is the swirl, conserved along a straight
+line. The deficit from unit length #emph[is] the swirl, and that is why no third
+coordinate is needed: a 3D ray has five degrees of freedom, revolution removes
+one, and $(x, r, d_x, dot(r))$ is exactly the four that remain. Only the sign of
+$L$ is lost, and the meridional plane is a mirror symmetry, so it is
+unobservable.
 
-An axisymmetric ray state is 3D while `scene.dim` is 2. Three sites outside
-`paths.py` assume those are the same number: `sources.sample` draws its direction
-from `sphere(key, scene.dim)`, `sources.sample` returns the sampled mesh point as
-the position, and the `diffuse` branch of `interactions.apply` builds a
-hemisphere about the meridional face normal.
+This is the convention the planar mode already uses, where the deficit stands for
+$d_z$ instead. Four consequences:
 
-Put the lifting on `Path`, as three members that are pure coordinate plumbing and
-leave every distribution choice where it already lives:
+- `travel` accumulates $t$, which #emph[is] the 3D path length, so
+  `transport.step`'s $exp(-kappa s)$ needs no correction factor in either mode.
+  There is no planar correction left to write.
+- The crossing's coefficients are read straight off the state: $u = 1 - d_x^2$
+  and $m = r_0 dot(r)_0$. Recovering them through
+  $L^2 = r^2 (1 - d_x^2 - dot(r)^2)$ would cancel badly as $|arrow(tau)| -> 1$.
+- `reflect` is unchanged, and needs no 3D form. A wall's 3D normal is
+  $(n_x, n_r hat(p))$ with no $hat(phi.alt)$ component, so a reflection leaves
+  the swirl untouched and mirrors the meridional pair about $(n_x, n_r)$ --
+  which is the existing formula, applied to `scene.normal` as it stands.
+  $|arrow(tau)|$ is preserved, as it must be, since $r$ does not move.
+- `advance` is the one member that changes shape. It is no longer a translation:
+  $ x_1 = x_0 + d_x t, quad r_1 = sqrt(u t^2 + 2 m t + r_0^2), quad
+    dot(r)_1 = (u t + m) \/ r_1 $
+  Closed form, so still exact and still free of integration drift.
 
-/ `ndim`: dimension of the ray state: 3 for axisymmetric, `scene.dim` otherwise.
-/ `lift(point)`: mesh point to ray-space position. Rotational symmetry lets a
-  newly emitted ray always start at $theta = 0$, so $(x, r) -> (x, r, 0)$. Only
-  new points need it; rays in flight already carry a 3D position.
-/ `lift_normal(state, normal)`: meridional normal to ray-space normal. This one
-  cannot be a constant transform, because the 3D outward normal of an
-  axisymmetric wall depends on where the ray sits on the ring:
-  $ arrow(n)_3 = (n_x, n_r hat(p)), quad quad hat(p) = arrow(p)/(|arrow(p)|) $
-  `reflect` needs the identical expression, which is the argument for naming it
-  once. `LinearPath` gets identities throughout.
+=== Drawing a direction
 
-The alternative, a symmetry flag on `Scene` that `sources` and `interactions` branch
-on, needs fewer members but spreads axisymmetric knowledge across three
-modules, and every future mode would touch all of them. That is the opposite of
-how `interactions.apply` keeps boundary kinds out of `transport`.
+A direction is drawn in 3D and reduced to the plane, which is one operation for
+every mode: draw on $S^2$, keep the first two components. For axisymmetric that
+happens in the local frame $(hat(x), hat(p), hat(phi.alt))$ at the ray's own
+radius, where a wall normal embeds as the constant $(n_x, n_r, 0)$ and no ring
+position is ever needed. `Path.isotropic` and `Path.lambertian` are that pair,
+and `AxisymmetricPath` inherits both unchanged.
+
+An earlier draft of this note lifted `RayState` to 3D instead, and added `ndim`,
+`lift` and `lift_normal` to `Path` to reconcile a 3D ray with a 2D mesh. The
+reduced state removes the mismatch rather than plumbing around it: emitted points
+stay meridional so nothing needs lifting, and the wall normal has no ring
+dependence to encode.
+
+What it gives up is the azimuth, which is never materialised. Drawing a true 3D
+ray path -- for a figure, say -- means integrating $d theta \/ d t = L \/ r^2$
+after the fact.
 
 === Choosing the axis <axis>
 
@@ -351,19 +374,20 @@ Default to axial = first in-plane coordinate, radius = second, positive.
 #table(
   columns: 2,
   table.header([*file*], [*change*]),
-  [`paths.py`], [add `AxisymmetricPath`; add `ndim`, `lift`, `lift_normal` to
-    `Path`; identities on `LinearPath`],
-  [`sources.py`], [`sample` gains a `path` argument, threading through
-    `transport._refill` and `transport.trace`],
-  [`interactions.py`], [the `diffuse` branch routes through `path.lift_normal`
-    instead of building a `RayState` directly],
-  [`mesh/geometry.py`, `io/vtk.py`], [configurable in-plane column selection, if
-    meshes off the $x y$ plane are wanted],
-  [`transport.py`], [none],
+  [`paths.py`], [add `AxisymmetricPath`: a hyperbolic `crossing` and the
+    `advance` above. The direction draws and `reflect` are inherited as they
+    stand],
+  [`sources.py`], [radius-weighted point sampling (#ref(<geometry-work>)); the
+    direction draws need nothing],
+  [`mesh/geometry.py`], [Pappus weighting (#ref(<geometry-work>))],
+  [`io/vtk.py`], [configurable in-plane column selection, if meshes off the
+    $x y$ plane are wanted],
+  [`interactions.py`, `transport.py`], [none],
 )
 
-`RayState`'s arrays become 3-vectors while `scene.dim` is 2. That asymmetry is
-deliberate and belongs in the module docstring.
+`RayState` keeps `scene.dim` components, and its tangent is not a unit vector.
+Every mode leans on that, so it is stated in `paths.py`'s docstrings rather than
+left to be inferred.
 
 == What still blocks a meaningful run <geometry-work>
 
@@ -393,6 +417,9 @@ $alpha_i = 2$ and the rest 1.
   falls inside must exit through the face it entered by, at the scanned $t$.
 + *Axis unreachable.* No ray terminates on the $r = 0$ group unless $b$ is below
   tolerance. Guards against leaks through the symmetry axis.
++ *Swirl conserved.* $r^2 (1 - d_x^2 - dot(r)^2)$ is unchanged across an interior
+  crossing and across a specular bounce. The planar mode has the same invariant
+  in its simpler form, that $|arrow(tau)|$ itself does not move.
 + *End-to-end*, once #ref(<geometry-work>) is done. An axisymmetric cylinder must
   reproduce the existing 3D cylinder heating, binned in $(x, r)$, within
   Monte-Carlo noise. This is the strongest check available and it reuses

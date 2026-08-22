@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from meshes import brick, brick_sides
 from scipy.special import expn
 
@@ -11,37 +12,37 @@ from raytrax.paths import LinearPath
 from raytrax.scene import build as build_scene
 
 
-def test_tangent_slab():
+@pytest.mark.parametrize("dim", [3, 2])
+def test_tangent_slab(dim):
     """A hot wall radiating into cold absorbing gas has a known 1D profile.
 
-    Mirroring the four lateral sides makes the slab effectively infinite, so the
+    Mirroring the lateral sides makes the slab effectively infinite, so the
     cell-averaged heating must match 2*[E3(k*a) - E3(k*b)] / (b - a).
+
+    The 2D mesh is read as a domain extruded out of plane, which is the same
+    slab: it has to land on the same profile as the 3D one. That is the check
+    that the out-of-plane component really is carried in |tangent|, since
+    dropping it would shorten every path and pile the heating up at the wall.
     """
     depth, kappa, num_rays = 20, 0.25, 200_000
-    blocks, vertices = brick((depth, 1, 1))
+    blocks, vertices = brick((depth,) + (1,) * (dim - 1), dim=dim)
 
     mesh_topology = topology.build(blocks)
     mesh_geometry = geometry.build(mesh_topology, vertices)
     groups = boundaries.tag(mesh_topology, brick_sides(mesh_topology, mesh_geometry, vertices))
     scene = build_scene(mesh_topology, mesh_geometry, groups)
 
-    table = interactions.build(
-        groups,
-        {
-            "xlo": Kind.ABSORB,
-            "xhi": Kind.ABSORB,
-            "ylo": Kind.SPECULAR,
-            "yhi": Kind.SPECULAR,
-            "zlo": Kind.SPECULAR,
-            "zhi": Kind.SPECULAR,
-        },
-    )
+    lateral = ["ylo", "yhi", "zlo", "zhi"][: 2 * (dim - 1)]
+    kinds = {"xlo": Kind.ABSORB, "xhi": Kind.ABSORB} | dict.fromkeys(lateral, Kind.SPECULAR)
+    table = interactions.build(groups, kinds)
 
     hot = np.flatnonzero(groups.face_group == groups.index("xlo"))
     source = sources.build(jnp.zeros(mesh_topology.num_cells), mesh_geometry.faces.area[hot], hot)
 
     key_rays, key_march = jax.random.split(jax.random.key(0))
-    state, cell = jax.vmap(sources.sample, in_axes=(0, None, None))(jax.random.split(key_rays, num_rays), source, scene)
+    state, cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
+        jax.random.split(key_rays, num_rays), source, scene, LinearPath()
+    )
     rays = transport.Rays(
         cell=cell,
         state=state,

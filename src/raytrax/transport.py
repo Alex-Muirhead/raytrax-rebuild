@@ -49,7 +49,7 @@ class Rays(eqx.Module):
     alive: Bool[Array, " nray"]
 
 
-def _refill(key, rays, launched, launch: Launch, scene: Scene):
+def _refill(key, rays, launched, launch: Launch, scene: Scene, path: Path):
     """Overwrite dead lanes with fresh rays, up to the remaining budget."""
     dead = ~rays.alive
     # Rank among dead lanes, so the budget is spent on a well-defined prefix.
@@ -57,7 +57,7 @@ def _refill(key, rays, launched, launch: Launch, scene: Scene):
     take = dead & (launched + rank < launch.budget)
 
     keys = jax.random.split(key, rays.cell.shape[0])
-    state, cell = jax.vmap(sample_source, in_axes=(0, None, None))(keys, launch.sources, scene)
+    state, cell = jax.vmap(sample_source, in_axes=(0, None, None, None))(keys, launch.sources, scene, path)
 
     return Rays(
         cell=_keep(take, cell, rays.cell),
@@ -157,7 +157,7 @@ def march(
             # the steps it skips.
             rays, launched = jax.lax.cond(
                 (index % launch.interval == 0) & (launched < launch.budget),
-                lambda: _refill(refill_key, rays, launched, launch, scene),
+                lambda: _refill(refill_key, rays, launched, launch, scene, path),
                 lambda: (rays, launched),
             )
         return index + 1, key, launched, rays, deposit
@@ -196,7 +196,9 @@ def trace(
     lanes = min(num_rays, lanes or num_rays)
     key_launch, key_march = jax.random.split(key)
 
-    state, cell = jax.vmap(sample_source, in_axes=(0, None, None))(jax.random.split(key_launch, lanes), sources, scene)
+    state, cell = jax.vmap(sample_source, in_axes=(0, None, None, None))(
+        jax.random.split(key_launch, lanes), sources, scene, path
+    )
     quantum = sources.total / num_rays
     rays = Rays(cell=cell, state=state, energy=jnp.full(lanes, quantum), alive=jnp.ones(lanes, dtype=bool))
 

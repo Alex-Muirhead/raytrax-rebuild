@@ -4,8 +4,8 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float, Int
 
 from raytrax.mesh.topology import EXTERIOR
-from raytrax.paths import RayState
-from raytrax.random import cosine_hemisphere, simplex, sphere
+from raytrax.paths import Path, RayState
+from raytrax.random import simplex
 from raytrax.scene import Scene
 
 
@@ -58,11 +58,13 @@ def build(cell_power, face_power=None, face=None) -> Sources:
     )
 
 
-def sample(key, sources: Sources, scene: Scene) -> tuple[RayState, Int[Array, ""]]:
+def sample(key, sources: Sources, scene: Scene, path: Path) -> tuple[RayState, Int[Array, ""]]:
     """Draw one ray from the combined volume and surface emission.
 
     Volume emission is isotropic; surface emission is cosine-weighted about the
-    inward normal.
+    inward normal. Both go through `path`, which draws in 3D and keeps the part
+    that lies in the mesh -- so on a 2D mesh the tangent comes back shorter than
+    unit rather than confined to the plane.
     """
     key_source, key_point, key_direction = jax.random.split(key, 3)
     num_cells = sources.cell_power.shape[0]
@@ -75,7 +77,7 @@ def sample(key, sources: Sources, scene: Scene) -> tuple[RayState, Int[Array, ""
     if sources.face_power.shape[0] == 0:
         return RayState(
             position=sample_cell_point(key_point, scene, source),
-            tangent=sphere(key_direction, scene.dim),
+            tangent=path.isotropic(key_direction, scene.dim),
             travel=jnp.zeros(()),
         ), source
 
@@ -96,8 +98,8 @@ def sample(key, sources: Sources, scene: Scene) -> tuple[RayState, Int[Array, ""
         ),
         tangent=jnp.where(
             from_surface,
-            cosine_hemisphere(key_direction, inward),
-            sphere(key_direction, scene.dim),
+            path.lambertian(key_direction, inward),
+            path.isotropic(key_direction, scene.dim),
         ),
         travel=jnp.zeros(()),
     ), jnp.where(from_surface, cells.max(), cell)

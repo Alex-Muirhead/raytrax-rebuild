@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.20.4"
+__generated_with = "0.24.0"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -26,25 +26,25 @@ with app.setup:
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        """
-        # Ray tracing a participating medium
+    mo.md("""
+    # Ray tracing a participating medium
 
-        A cold absorbing gas is heated by a hot wall at the low-x end. Both
-        domains use the same setup, so the only thing that changes is the mesh.
+    A cold absorbing gas is heated by a hot wall at the low-x end. Both
+    domains use the same setup, so the only thing that changes is the mesh.
 
-        - **cylinder** — 3D tetrahedra. With the lateral surface mirrored the
-          domain is effectively an infinite slab, so the axial heating profile
-          has a closed form to check against.
-        - **plane** — 2D, deliberately **mixed**: quads on the lower half,
-          triangles on the upper, sharing an interior face.
+    - **cylinder** — 3D tetrahedra. With the lateral surface mirrored the
+      domain is effectively an infinite slab, so the axial heating profile
+      has a closed form to check against.
+    - **plane** — 2D, deliberately **mixed**: quads on the lower half,
+      triangles on the upper, sharing an interior face.
 
-        The 2D case is genuinely two-dimensional radiation (directions drawn from
-        the circle), *not* a slice through a 3D problem. Planar and axisymmetric
-        corrections are not implemented yet, so its profile is not expected to
-        match the 3D slab result.
-        """
-    )
+    The 2D case is read as a **planar** domain: a slice through something
+    extruded infinitely out of plane, with directions still drawn on the full
+    sphere. Only the in-plane part of a direction is stored, so `|tangent| < 1`
+    and the distance flown exceeds the in-plane chord. Mirroring the lateral
+    boundary then makes it the same infinite slab as the cylinder, and both
+    domains are checked against the same closed form.
+    """)
     return
 
 
@@ -90,7 +90,7 @@ def _(mesh):
 
 
 @app.cell
-def _(mesh, mirror, scene):
+def _(mesh, mirror):
     # A black hot wall, a black cold wall, and a lateral surface that either
     # mirrors rays back in or lets them escape.
     lateral = Kind.SPECULAR if mirror.value else Kind.ESCAPE
@@ -109,12 +109,13 @@ def _(mesh, mirror, scene):
 @app.cell
 def _(kappa, mesh, num_rays, scene, source, table):
     _rays = int(num_rays.value)
+    _path = LinearPath()
     key_launch, key_march = jax.random.split(jax.random.key(4))
 
     # Sampling explicitly rather than through `transport.trace` keeps the launch
     # states around for the ray-path plot below.
-    launch_state, launch_cell = jax.vmap(sources.sample, in_axes=(0, None, None))(
-        jax.random.split(key_launch, _rays), source, scene
+    launch_state, launch_cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
+        jax.random.split(key_launch, _rays), source, scene, _path
     )
     initial = transport.Rays(
         cell=launch_cell,
@@ -124,9 +125,9 @@ def _(kappa, mesh, num_rays, scene, source, table):
     )
     absorptivity = jnp.full(mesh.topology.num_cells, kappa.value)
 
-    final, deposit = transport.march(key_march, initial, scene, LinearPath(), table, absorptivity, max_steps=4000)
+    final, deposit = transport.march(key_march, initial, scene, _path, table, absorptivity, max_steps=4000)
     heating = np.asarray(deposit.cells) / mesh.geometry.cells.volume
-    return absorptivity, deposit, final, heating, initial
+    return deposit, final, heating, initial
 
 
 @app.cell(hide_code=True)
@@ -168,14 +169,13 @@ def _(heating, kappa, mesh, mirror):
         volume = np.bincount(index, mesh.geometry.cells.volume, bins.size - 1)
         ax.stairs(energy / volume, bins, label="Monte-Carlo", lw=2)
 
-        if mesh.topology.dim == 3 and mirror.value:
-            # Mirrored sides make this an infinite slab: the cell-averaged
-            # heating over [a, b] integrates to 2 (E3(ka) - E3(kb)) / (b - a).
+        if mirror.value:
+            # Mirrored sides make this an infinite slab -- in 2D as much as in
+            # 3D, since planar extrusion is the slab's other two directions. The
+            # cell-averaged heating over [a, b] is 2 (E3(ka) - E3(kb)) / (b - a).
             near, far = kappa.value * (bins[:-1] - lo), kappa.value * (bins[1:] - lo)
             exact = 2 * (expn(3, near) - expn(3, far)) / (bins[1:] - bins[:-1])
             ax.stairs(exact, bins, label="Tangent slab", ls="--", color="C1", lw=2)
-        elif mesh.topology.dim == 2:
-            ax.set_title("2D radiation — the 3D slab result does not apply here", fontsize=9)
 
         ax.set_xlabel("x")
         ax.set_ylabel("Volumetric heating")
@@ -264,8 +264,9 @@ def _(final, initial, mesh):
         edges = LineCollection(vertices[mesh.topology.face_vertices[:, :2]], linewidths=0.15, colors="0.75")
         ax.add_collection(edges)
 
-        # Start-to-finish chords. A mirrored ray really flew a longer, folded
-        # path, so this is where it began and ended rather than the route.
+        # Start-to-finish chords. Two reasons the colour exceeds the length
+        # drawn: a mirrored ray flew a longer, folded path, and the part of the
+        # direction that points out of plane is not drawable at all.
         show = slice(0, 200)
         chords = np.stack([initial.state.position[show], final.state.position[show]], axis=1)
         paths = LineCollection(chords, cmap="viridis", linewidths=0.6)

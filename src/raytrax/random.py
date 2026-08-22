@@ -18,8 +18,8 @@ def simplex(key, ndim: int, shape: tuple[int, ...] = ()):
 def cosine_hemisphere(key, normal):
     """Sample a cosine-weighted (Lambertian) direction about `normal`.
 
-    Exact in 3D; the 2D form is a hemisphere distribution but not the
-    planar-projected cosine density.
+    Exact in 3D, which is where every caller uses it: `Path.lambertian` embeds an
+    in-plane normal before drawing, rather than sampling in the plane.
     """
     direction = normal + sphere(key, ndim=normal.shape[-1])
     return direction / jnp.linalg.vector_norm(direction, axis=-1, keepdims=True)

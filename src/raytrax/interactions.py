@@ -9,7 +9,6 @@ from jaxtyping import Array, Float, Int
 
 from raytrax.mesh.boundaries import BoundaryGroups
 from raytrax.paths import Path, RayState
-from raytrax.random import cosine_hemisphere
 
 
 class Kind(IntEnum):
@@ -71,7 +70,7 @@ def apply(
         return path.reflect(state, normal), 1 - rho, jnp.bool_(False)
 
     def diffuse(state):
-        tangent = cosine_hemisphere(key, -normal)
+        tangent = path.lambertian(key, -normal)
         return RayState(state.position, tangent, state.travel), 1 - rho, jnp.bool_(False)
 
     return jax.lax.switch(interactions.kind[group], [escape, absorb, specular, diffuse], state)
