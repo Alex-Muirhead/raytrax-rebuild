@@ -9,22 +9,6 @@ from raytrax.paths import Path, RayState
 from raytrax.scene import Scene
 
 
-def _roulette(key, energy, alive, threshold):
-    """Retire faint rays without biasing the result.
-
-    A ray below `threshold` survives with probability energy/threshold and is
-    promoted to exactly `threshold` if it does, so its expected energy is
-    unchanged. Without this, the rare ray that keeps reflecting holds the whole
-    batch open long after it carries anything worth tracking.
-    """
-    faint = alive & (energy < threshold)
-    survives = jax.random.uniform(key, energy.shape) * threshold < energy
-    return (
-        jnp.where(faint, jnp.where(survives, threshold, 0.0), energy),
-        alive & (~faint | survives),
-    )
-
-
 def _keep(mask, new, old):
     """Advance only the lanes that are still alive, broadcasting the mask."""
     return jnp.where(mask.reshape(mask.shape + (1,) * (old.ndim - mask.ndim)), new, old)
@@ -90,19 +74,18 @@ def march(
     interactions: Interactions,
     absorptivity: Float[Array, " ncell"],
     max_steps: int = 1000,
-    roulette: float = 0.0,
 ) -> tuple[Rays, Deposit]:
     """Walk a batch of rays until they all terminate or `max_steps` runs out.
 
-    The loop exits on `any(alive)`, but that only pays off if every ray actually
-    finishes: a handful of rays rattling around a mirrored boundary will hold the
-    whole batch open to `max_steps`. `roulette` is what really ends them -- see
-    `_roulette` -- so it is worth setting whenever a boundary reflects.
+    Exiting on `any(alive)` makes `max_steps` a safety net rather than a cost:
+    the batch pays for its longest ray, not for the bound. It does not make dead
+    rays free -- under `vmap` a step costs O(lanes), not O(alive) -- so the
+    remaining waste is idle lanes, which only refilling them can recover.
     """
 
     def body(carry):
         index, key, rays, deposit = carry
-        key, subkey, roulette_key = jax.random.split(key, 3)
+        key, subkey = jax.random.split(key)
         was_alive = rays.alive
 
         cell, state, energy, alive, cell_deposit, face, face_deposit = jax.vmap(
@@ -124,15 +107,11 @@ def march(
             cells=deposit.cells.at[rays.cell].add(jnp.where(was_alive, cell_deposit, 0.0)),
             faces=deposit.faces.at[face].add(jnp.where(was_alive, face_deposit, 0.0)),
         )
-        alive = was_alive & alive
-        if roulette > 0:
-            energy, alive = _roulette(roulette_key, energy, alive, roulette)
-
         rays = Rays(
             cell=_keep(was_alive, cell, rays.cell),
             state=jax.tree.map(lambda new, old: _keep(was_alive, new, old), state, rays.state),
             energy=_keep(was_alive, energy, rays.energy),
-            alive=alive,
+            alive=was_alive & alive,
         )
         return index + 1, key, rays, deposit
 
