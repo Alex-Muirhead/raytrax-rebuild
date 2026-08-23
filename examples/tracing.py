@@ -33,13 +33,13 @@ def _():
     A cold absorbing gas is heated by a hot wall at the low-x end. Both
     domains use the same setup, so the only thing that changes is the mesh.
 
-    - **cylinder** — 3D tetrahedra. With the lateral surface mirrored the
+    - **cylinder** - 3D tetrahedra. With the lateral surface mirrored the
       domain is effectively an infinite slab, so the axial heating profile
       has a closed form to check against.
-    - **plane** — 2D, deliberately **mixed**: quads on the lower half,
+    - **plane** - 2D, deliberately **mixed**: quads on the lower half,
       triangles on the upper, sharing an interior face.
 
-    - **meridian** — the same solid as the cylinder, meshed as its 2D
+    - **meridian** - the same solid as the cylinder, meshed as its 2D
       meridional half-plane and read as **axisymmetric**.
 
     A 2D mesh can be read two ways. **Planar** extrudes it infinitely out of
@@ -55,7 +55,7 @@ def _():
 @app.cell
 def _():
     domain = mo.ui.dropdown(["cylinder", "plane", "meridian"], value="cylinder", label="Domain")
-    kappa = mo.ui.slider(0.1, 5.0, 0.1, value=1.0, label="Absorptivity κ")
+    kappa = mo.ui.slider(0.1, 5.0, 0.1, value=1.0, label="Absorptivity kappa")
     num_rays = mo.ui.dropdown(["50000", "200000", "1000000"], value="200000", label="Rays")
     mirror = mo.ui.checkbox(True, label="Mirror the lateral boundary")
     mo.hstack([domain, kappa, num_rays, mirror], justify="start", gap=2)
@@ -66,7 +66,7 @@ def _():
 def _(domain):
     path = MESHES / f"{domain.value}.msh"
     if not path.exists():
-        raise FileNotFoundError(f"{path} missing — run `uv run python examples/meshes/generate.py`")
+        raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
 
     mesh = vtk.read(path)
     # Revolving reweights cells as rings, which the axisymmetric path assumes.
@@ -89,7 +89,7 @@ def _(geom, mesh):
     | | |
     |---|---|
     | dimension | {mesh.topology.dim} |
-    | cells | {mesh.topology.num_cells:,} — {", ".join(f"{n:,} {t}" for t, n in _counts.items())} |
+    | cells | {mesh.topology.num_cells:,} - {", ".join(f"{n:,} {t}" for t, n in _counts.items())} |
     | faces | {mesh.topology.num_faces:,} |
     | face slots per cell | {mesh.topology.max_faces} |
     | boundary groups | {", ".join(mesh.groups.names[1:])} |
@@ -307,7 +307,7 @@ def _(deposit, domain, geom, heating, hot, mesh):
     _out = MESHES / f"{domain.value}_heating.vtu"
     _face = np.asarray(deposit.faces) / np.where(geom.faces.area > 0, geom.faces.area, np.inf)
     vtk.write(_out, mesh, {"heating": heating})
-    mo.md(f"Wrote `{_out.name}` — cell heating, openable in ParaView. Peak wall flux {_face[hot].max():.4f}.")
+    mo.md(f"Wrote `{_out.name}` - cell heating, openable in ParaView. Peak wall flux {_face[hot].max():.4f}.")
     return
 
 

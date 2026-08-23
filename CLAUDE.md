@@ -8,11 +8,11 @@ on the GPU via JAX.
 The hard split is **host vs device**, and it is what keeps mixed element types
 manageable:
 
-- `elements.py` — element/face tables. One entry per first-order VTK cell.
-- `mesh/` — pure NumPy, no JAX. Topology, geometry, boundary groups.
-- `scene.py` — the boundary. `build()` flattens a mesh into padded rectangular
+- `elements.py` - element/face tables. One entry per first-order VTK cell.
+- `mesh/` - pure NumPy, no JAX. Topology, geometry, boundary groups.
+- `scene.py` - the boundary. `build()` flattens a mesh into padded rectangular
   arrays; everything downstream is JAX.
-- `paths.py`, `medium.py`, `interactions.py`, `sources.py`, `transport.py` — JAX.
+- `paths.py`, `medium.py`, `interactions.py`, `sources.py`, `transport.py` - JAX.
 
 ## Invariants worth knowing
 
@@ -29,18 +29,28 @@ manageable:
   materialises a per-ray copy of the accumulator and memory explodes.
 - **Faces must be planar.** `scene.validate` rejects warped quads; they break
   the half-space cell model and rays leak.
+- **A revolved mesh is stored `(x, r)` in columns 0 and 1, with `r >= 0`.**
+- **`AxisymmetricPath` needs geometry passed through `geometry.revolve`.**
+  Without it the cells are still Cartesian and the energy is wrong.
+- **The crossing parameter is a distance only for `LinearPath`.** Read the
+  length flown off `travel`, which every mode accumulates in 3D.
 
 ## Conventions
 
-- Package manager **uv** — `uv run pytest`, `uv run python ...`
+- Package manager **uv** - `uv run pytest`, `uv run python ...`
 - Format and organise imports with **ruff**; type-check with **pyrefly**
 - Version control is **jj**, not git (`jj st`, `jj diff`, `jj describe`)
-- Docstrings say *what*, in one line, plus at most one sentence of caveat a
-  caller needs. Never how it works or why it was designed that way — that goes
-  in the commit message or `docs/`, and real invariants go in this file.
+- Strict ASCII in every file, prose included. No em-dashes, no Greek, no
+  symbols. Maths that needs them goes in a Typst file under `docs/`.
+- Docstrings say *what*, in one line. Add a caveat only where a caller would get
+  it wrong without one; the aim is that the docstring costs less to read than
+  the code it describes. Never how it works or why it was designed that way -
+  that goes in `DECISIONS.md` or `docs/`, and real invariants go in this file.
 - Comment only what the code cannot say for itself, chiefly framework oddities,
   and say *why* the code deviates from idiom.
 - Commit messages are one-liners. Add a body only to record a fact the diff
   cannot show, and keep it to a sentence or two.
+- `DECISIONS.md` records why a design was chosen and what it was chosen over.
+  This file states the invariant; that one states the argument.
 - Prefer invariance tests over piles of hardcoded cases; if a specific case is
   tested, say what it is looking for.
