@@ -1,12 +1,14 @@
-from typing import ClassVar
+import abc
+from typing import ClassVar, override
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from equinox._misc import default_floating_dtype
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, Float
 
 from raytrax.random import cosine_hemisphere, sphere
+from raytrax.shapes import Index, KeyArray, Normals, Offsets, Scalar, Vector
 
 
 class RayState(eqx.Module):
@@ -46,23 +48,29 @@ class Path(eqx.Module):
 
     spatial_dim: ClassVar[int] = 3
 
-    def isotropic(self, key, ndim: int) -> Float[Array, " ndim"]:
+    # Instance methods, not classmethods: they read only `spatial_dim` today, but
+    # `AxisymmetricPath` carries a static field for which in-plane coordinate is
+    # axial, and reducing the draw has to respect it.
+    def isotropic(self, key: KeyArray, ndim: int) -> Vector:
         """A direction uniform on the sphere, reduced to the modelled plane."""
         return sphere(key, self.spatial_dim)[:ndim]
 
-    def lambertian(self, key, normal) -> Float[Array, " ndim"]:
+    def lambertian(self, key: KeyArray, normal: Vector) -> Vector:
         """Cosine-weighted about an in-plane normal, embedded then reduced."""
         ndim = normal.shape[-1]
         return cosine_hemisphere(key, jnp.pad(normal, (0, self.spatial_dim - ndim)))[:ndim]
 
-    def crossing(self, normal, offset, state: RayState) -> tuple[Int[Array, "..."], Float[Array, "..."]]:
-        raise NotImplementedError
+    @abc.abstractmethod
+    def crossing(self, normal: Normals, offset: Offsets, state: RayState) -> tuple[Index, Scalar]:
+        """The slot the ray leaves through, and the parameter at which it does."""
 
-    def advance(self, state: RayState, parameter) -> RayState:
-        raise NotImplementedError
+    @abc.abstractmethod
+    def advance(self, state: RayState, parameter: Scalar) -> RayState:
+        """Step the ray forward by `parameter`, accumulating true 3D length."""
 
-    def reflect(self, state: RayState, normal) -> RayState:
-        raise NotImplementedError
+    @abc.abstractmethod
+    def reflect(self, state: RayState, normal: Vector) -> RayState:
+        """Mirror the tangent about an outward unit normal."""
 
 
 class LinearPath(Path):
@@ -73,7 +81,8 @@ class LinearPath(Path):
     the 3D distance flown.
     """
 
-    def crossing(self, normal, offset, state):
+    @override
+    def crossing(self, normal: Normals, offset: Offsets, state: RayState) -> tuple[Index, Scalar]:
         epsilon = np.finfo(default_floating_dtype()).resolution
 
         # Signed distance "outside" each half-space.
@@ -92,14 +101,16 @@ class LinearPath(Path):
         slot = jnp.nanargmin(travel)
         return slot, travel[slot]
 
-    def advance(self, state, parameter):
+    @override
+    def advance(self, state: RayState, parameter: Scalar) -> RayState:
         return RayState(
             position=state.position + parameter * state.tangent,
             tangent=state.tangent,
             travel=state.travel + parameter,
         )
 
-    def reflect(self, state, normal):
+    @override
+    def reflect(self, state: RayState, normal: Vector) -> RayState:
         # Outward unit normal, so the mirror preserves `|tangent|` -- including
         # the out-of-plane content it stands for, which an extruded or revolved
         # wall cannot touch.
