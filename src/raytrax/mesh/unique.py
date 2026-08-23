@@ -1,7 +1,8 @@
 import numpy as np
+from jaxtyping import Bool, Int
 
 
-def _lex_less(a, b):
+def _lex_less(a: Int[np.ndarray, "n k"], b: Int[np.ndarray, "n k"]) -> Bool[np.ndarray, " n"]:
     """Row-wise lexicographic comparison of two equally shaped 2D arrays."""
     differs = a != b
     first = np.argmax(differs, axis=1)[:, None]
@@ -10,7 +11,7 @@ def _lex_less(a, b):
     )
 
 
-def canonical_cycle(verts):
+def canonical_cycle(verts: Int[np.ndarray, "n k"]) -> tuple[Int[np.ndarray, "n k"], Int[np.ndarray, " n"]]:
     """Canonically wind each face, returning (keys, reversed_bit).
 
     Two cells sharing a face present it with opposite winding, so they agree on
@@ -40,12 +41,16 @@ def canonical_cycle(verts):
 
 
 def lex_unique(
-    keys,
+    keys: Int[np.ndarray, "n k"],
     return_index: bool = False,
     return_inverse: bool = False,
     return_counts: bool = False,
-):
-    """A stripped-down version of numpy.unique that uses lexsort on keys."""
+) -> tuple[np.ndarray, ...]:
+    """A stripped-down version of numpy.unique that uses lexsort on keys.
+
+    Returns the unique keys, followed by whichever of index, inverse and counts
+    were asked for, in that order.
+    """
     if len(keys.shape) != 2:
         raise ValueError("Keys must be 2 dimensional")
 

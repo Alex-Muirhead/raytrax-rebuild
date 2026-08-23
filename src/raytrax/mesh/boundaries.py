@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
+from jaxtyping import Int
 
 from raytrax.mesh.topology import MeshTopology
 from raytrax.mesh.unique import canonical_cycle, lex_unique
@@ -18,7 +19,7 @@ class BoundaryGroups:
     """
 
     names: tuple[str, ...]
-    face_group: np.ndarray  # [nface]
+    face_group: Int[np.ndarray, " nface"]
 
     def index(self, name: str) -> int:
         if name not in self.names:
@@ -26,7 +27,7 @@ class BoundaryGroups:
         return self.names.index(name)
 
 
-def match_faces(topology: MeshTopology, face_vertices) -> np.ndarray:
+def match_faces(topology: MeshTopology, face_vertices: Int[np.ndarray, "n k"]) -> Int[np.ndarray, " n"]:
     """Find face ids for faces given by their vertex ids, in any winding."""
     keys, _ = canonical_cycle(np.asarray(face_vertices))
     num_verts = keys.shape[1]

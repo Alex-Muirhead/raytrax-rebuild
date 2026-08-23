@@ -269,7 +269,7 @@ def _(final, initial, mesh):
         # direction that points out of plane is not drawable at all.
         show = slice(0, 200)
         chords = np.stack([initial.state.position[show], final.state.position[show]], axis=1)
-        paths = LineCollection(chords, cmap="viridis", linewidths=0.6)
+        paths = LineCollection(list(chords), cmap="viridis", linewidths=0.6)
         paths.set_array(np.asarray(final.state.travel[show]))
         ax.add_collection(paths)
 

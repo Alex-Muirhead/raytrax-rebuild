@@ -69,7 +69,7 @@ def mixed_3d():
 def brick(shape, dim=3):
     """A regular grid of unit hexes (3D) or quads (2D), tagged on each side."""
     counts = np.array(shape)
-    grid = np.indices(counts + 1).reshape(dim, -1).T.astype(float)
+    grid = np.indices(tuple(counts + 1)).reshape(dim, -1).T.astype(float)
     ids = np.arange(len(grid)).reshape(counts + 1)
 
     if dim == 3:
@@ -79,7 +79,7 @@ def brick(shape, dim=3):
         corner = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
         name = "quad"
 
-    origins = np.indices(counts).reshape(dim, -1).T
+    origins = np.indices(tuple(counts)).reshape(dim, -1).T
     cells = ids[tuple((origins[:, None, :] + corner[None, :, :]).transpose(2, 0, 1))]
     return [(name, cells)], grid
 

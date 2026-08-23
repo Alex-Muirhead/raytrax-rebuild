@@ -18,6 +18,7 @@ visualisation = ["pyvista[all]>=0.46.4"]
 
 [dependency-groups]
 dev = [
+    "beartype>=0.22.9",
     "gmsh>=4.15.1",
     "marimo>=0.20.4",
     "matplotlib>=3.10",

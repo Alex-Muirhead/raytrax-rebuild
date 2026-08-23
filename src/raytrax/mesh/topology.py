@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from jaxtyping import Bool, Int
 
 from raytrax.elements import ElementType, lookup
 from raytrax.mesh.unique import canonical_cycle, lex_unique
@@ -23,15 +24,15 @@ class MeshTopology:
 
     dim: int
     block_elements: tuple[ElementType, ...]
-    cell_block: np.ndarray  # [ncell] which input block a cell came from
-    cell_vertices: np.ndarray  # [ncell, max_cell_verts], -1 padded
-    cell_face: np.ndarray  # [ncell, max_faces] global face id, -1 padded
-    cell_face_sign: np.ndarray  # [ncell, max_faces] +1 outward, -1 inward, 0 padded
-    cell_face_valid: np.ndarray  # [ncell, max_faces]
-    cell_neighbour: np.ndarray  # [ncell, max_faces] cell id or negative sentinel
-    face_vertices: np.ndarray  # [nface, max_face_verts] canonically wound, -1 padded
-    face_num_verts: np.ndarray  # [nface]
-    face_cells: np.ndarray  # [nface, 2]; column 0 sees the stored normal as outward
+    cell_block: Int[np.ndarray, " ncell"]  # which input block a cell came from
+    cell_vertices: Int[np.ndarray, "ncell max_cell_verts"]  # -1 padded
+    cell_face: Int[np.ndarray, "ncell max_faces"]  # global face id, -1 padded
+    cell_face_sign: Int[np.ndarray, "ncell max_faces"]  # +1 outward, -1 inward, 0 padded
+    cell_face_valid: Bool[np.ndarray, "ncell max_faces"]
+    cell_neighbour: Int[np.ndarray, "ncell max_faces"]  # cell id or negative sentinel
+    face_vertices: Int[np.ndarray, "nface max_face_verts"]  # canonically wound, -1 padded
+    face_num_verts: Int[np.ndarray, " nface"]
+    face_cells: Int[np.ndarray, "nface 2"]  # column 0 sees the stored normal as outward
 
     @property
     def num_cells(self) -> int:
@@ -46,8 +47,8 @@ class MeshTopology:
         return self.cell_face.shape[1]
 
     @property
-    def is_boundary(self) -> np.ndarray:
-        """[nface] mask of faces with only one adjacent cell."""
+    def is_boundary(self) -> Bool[np.ndarray, " nface"]:
+        """Mask of faces with only one adjacent cell."""
         return np.any(self.face_cells < 0, axis=-1)
 
 
@@ -91,7 +92,8 @@ def build(blocks: Sequence[Block]) -> MeshTopology:
 
     # Deduplicate faces separately per vertex count so the keys stay rectangular;
     # this is what lets tets, pyramids, wedges and hexes share one mesh.
-    face_key_groups, face_count_groups = [], []
+    face_key_groups: list[np.ndarray] = []
+    face_count_groups: list[np.ndarray] = []
     for num_verts in np.unique(slot_num_verts[cell_face_valid]):
         selected = slot_num_verts == num_verts
         keys, bits = canonical_cycle(slot_verts[selected][:, :num_verts])

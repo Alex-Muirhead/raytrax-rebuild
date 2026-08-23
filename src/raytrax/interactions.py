@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from enum import IntEnum
+from types import MappingProxyType
 
 import equinox as eqx
 import jax
@@ -9,6 +10,7 @@ from jaxtyping import Array, Float, Int
 
 from raytrax.mesh.boundaries import BoundaryGroups
 from raytrax.paths import Path, RayState
+from raytrax.shapes import Flag, Index, KeyArray, Scalar, Vector
 
 
 class Kind(IntEnum):
@@ -30,7 +32,7 @@ class Interactions(eqx.Module):
 def build(
     groups: BoundaryGroups,
     kinds: Mapping[str, Kind],
-    reflectivity: Mapping[str, float] = {},
+    reflectivity: Mapping[str, float] = MappingProxyType({}),
 ) -> Interactions:
     """Assemble the interaction table. Groups left out escape."""
     kind = np.full(len(groups.names), Kind.ESCAPE, dtype=np.int64)
@@ -47,11 +49,11 @@ def build(
 def apply(
     path: Path,
     interactions: Interactions,
-    group,
-    key,
+    group: Index,
+    key: KeyArray,
     state: RayState,
-    normal,
-) -> tuple[RayState, Float[Array, "..."], Array]:
+    normal: Vector,
+) -> tuple[RayState, Scalar, Flag]:
     """Resolve a boundary hit into (state, absorbed fraction, terminated).
 
     `normal` is the outward unit normal of the face the ray left through. Adding
@@ -60,16 +62,16 @@ def apply(
     """
     rho = interactions.reflectivity[group]
 
-    def escape(state):
+    def escape(state: RayState) -> tuple[RayState, Scalar, Flag]:
         return state, jnp.zeros(()), jnp.bool_(True)
 
-    def absorb(state):
+    def absorb(state: RayState) -> tuple[RayState, Scalar, Flag]:
         return state, jnp.ones(()), jnp.bool_(True)
 
-    def specular(state):
+    def specular(state: RayState) -> tuple[RayState, Scalar, Flag]:
         return path.reflect(state, normal), 1 - rho, jnp.bool_(False)
 
-    def diffuse(state):
+    def diffuse(state: RayState) -> tuple[RayState, Scalar, Flag]:
         tangent = path.lambertian(key, -normal)
         return RayState(state.position, tangent, state.travel), 1 - rho, jnp.bool_(False)
 

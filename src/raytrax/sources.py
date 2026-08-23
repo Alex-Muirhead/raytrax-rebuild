@@ -1,15 +1,17 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 from jaxtyping import Array, Float, Int
 
 from raytrax.mesh.topology import EXTERIOR
 from raytrax.paths import Path, RayState
 from raytrax.random import simplex
 from raytrax.scene import Scene
+from raytrax.shapes import Index, KeyArray, Vector
 
 
-def sample_cell_point(key, scene: Scene, cell) -> Float[Array, " ndim"]:
+def sample_cell_point(key: KeyArray, scene: Scene, cell: Index) -> Vector:
     """Sample a point uniformly inside a cell, via its simplex decomposition."""
     key_simplex, key_barycentric = jax.random.split(key)
     index = jax.random.choice(key_simplex, scene.simplex_weight.shape[1], p=scene.simplex_weight[cell])
@@ -18,7 +20,7 @@ def sample_cell_point(key, scene: Scene, cell) -> Float[Array, " ndim"]:
     return weights[0] * scene.seed[cell] + weights[1:] @ corners
 
 
-def sample_face_point(key, scene: Scene, face) -> Float[Array, " ndim"]:
+def sample_face_point(key: KeyArray, scene: Scene, face: Index) -> Vector:
     """Sample a point uniformly on a face, via its fan decomposition."""
     key_fan, key_barycentric = jax.random.split(key)
     index = jax.random.choice(key_fan, scene.face_fan_weight.shape[1], p=scene.face_fan_weight[face])
@@ -42,7 +44,7 @@ class Sources(eqx.Module):
     total: Float[Array, ""]
 
 
-def build(cell_power, face_power=None, face=None) -> Sources:
+def build(cell_power: ArrayLike, face_power: ArrayLike | None = None, face: ArrayLike | None = None) -> Sources:
     cell_power = jnp.asarray(cell_power)
     face_power = jnp.zeros(0) if face_power is None else jnp.asarray(face_power)
     face = jnp.zeros(0, dtype=int) if face is None else jnp.asarray(face)
@@ -58,7 +60,7 @@ def build(cell_power, face_power=None, face=None) -> Sources:
     )
 
 
-def sample(key, sources: Sources, scene: Scene, path: Path) -> tuple[RayState, Int[Array, ""]]:
+def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path) -> tuple[RayState, Index]:
     """Draw one ray from the combined volume and surface emission.
 
     Volume emission is isotropic; surface emission is cosine-weighted about the

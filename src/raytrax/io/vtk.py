@@ -5,6 +5,7 @@ from pathlib import Path
 
 import meshio
 import numpy as np
+from numpy.typing import ArrayLike
 
 from raytrax.elements import ELEMENT_TYPES, FACE_ELEMENT_NAMES
 from raytrax.mesh import boundaries, geometry, topology
@@ -70,7 +71,9 @@ def _face_groups(mesh_topology: topology.MeshTopology, source: meshio.Mesh) -> d
 
 def write(path: str | Path, mesh: Mesh, cell_data: dict[str, np.ndarray]) -> None:
     """Write the mesh back out with extra cell fields, split by original block."""
-    blocks = [
+    # Annotated because meshio's `cells` parameter is an invariant list, so a
+    # list[tuple[str, ndarray]] is not assignable to it.
+    blocks: list[meshio.CellBlock | tuple[str, ArrayLike]] = [
         (element.name, mesh.topology.cell_vertices[mesh.topology.cell_block == index, : element.num_vertices])
         for index, element in enumerate(mesh.topology.block_elements)
     ]

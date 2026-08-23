@@ -2,44 +2,45 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
+from jaxtyping import Float, Int
 
 from raytrax.mesh.topology import MeshTopology, cell_face_vertices
 
 
 @dataclass(frozen=True)
 class FaceGeometry:
-    centroid: np.ndarray  # [nface, dim]
-    area: np.ndarray  # [nface]
-    normal: np.ndarray  # [nface, dim] unit, outward from face_cells[:, 0]
-    offset: np.ndarray  # [nface] plane constant, normal . x = offset
-    flatness: np.ndarray  # [nface] out-of-plane deviation relative to face size
-    fan_vertices: np.ndarray  # [nface, nfan, dim] vertex ids of a simplex fan
-    fan_weight: np.ndarray  # [nface, nfan] area fractions, rows sum to 1
+    centroid: Float[np.ndarray, "nface dim"]
+    area: Float[np.ndarray, " nface"]
+    normal: Float[np.ndarray, "nface dim"]  # unit, outward from face_cells[:, 0]
+    offset: Float[np.ndarray, " nface"]  # plane constant, normal . x = offset
+    flatness: Float[np.ndarray, " nface"]  # deviation relative to face size
+    fan_vertices: Int[np.ndarray, "nface nfan dim"]  # vertex ids of a simplex fan
+    fan_weight: Float[np.ndarray, "nface nfan"]  # area fractions, rows sum to 1
 
 
 @dataclass(frozen=True)
 class CellGeometry:
-    volume: np.ndarray  # [ncell]
-    centroid: np.ndarray  # [ncell, dim]
-    seed: np.ndarray  # [ncell, dim] interior point every simplex spans from
-    simplex_vertices: np.ndarray  # [ncell, nsimplex, dim] vertex ids, -1 where unused
-    simplex_weight: np.ndarray  # [ncell, nsimplex] volume fractions, rows sum to 1
+    volume: Float[np.ndarray, " ncell"]
+    centroid: Float[np.ndarray, "ncell dim"]
+    seed: Float[np.ndarray, "ncell dim"]  # interior point every simplex spans from
+    simplex_vertices: Int[np.ndarray, "ncell nsimplex dim"]  # vertex ids, -1 where unused
+    simplex_weight: Float[np.ndarray, "ncell nsimplex"]  # volume fractions, rows sum to 1
 
 
 @dataclass(frozen=True)
 class MeshGeometry:
-    vertices: np.ndarray
+    vertices: Float[np.ndarray, "nvert dim"]
     faces: FaceGeometry
     cells: CellGeometry
 
 
-def _fan(points):
+def _fan(points: Float[np.ndarray, "n k dim"]) -> Float[np.ndarray, "n nfan 3 dim"]:
     """Split each polygon into triangles about its first vertex."""
     num_verts = points.shape[-2]
     return np.stack([points[:, [0, j, j + 1]] for j in range(1, num_verts - 1)], axis=1)
 
 
-def _triangle_normals(points):
+def _triangle_normals(points: Float[np.ndarray, "... 3 dim"]) -> Float[np.ndarray, "... dim"]:
     """Half the cross product of each triangle's edges: normal with area magnitude."""
     ref, u, v = np.unstack(points, axis=-2)
     return np.cross(u - ref, v - ref) / 2

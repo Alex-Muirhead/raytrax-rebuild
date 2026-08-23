@@ -109,7 +109,9 @@ def validate(topology: MeshTopology, geometry: MeshGeometry, *, flatness: float 
         raise ValueError(f"{np.sum(np.any(outside, axis=1))} cells do not contain their own centroid")
 
 
-def contains(scene: Scene, cell, point, tolerance: float = 0.0) -> Bool[Array, "..."]:
+def contains(
+    scene: Scene, cell: Int[Array, "..."], point: Float[Array, "... ndim"], tolerance: float = 0.0
+) -> Bool[Array, "..."]:
     """Whether a point lies inside a cell's half-spaces.
 
     A point sitting exactly on a shared face -- which is where every crossing

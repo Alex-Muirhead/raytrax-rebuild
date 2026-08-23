@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import override
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,6 +22,7 @@ class Uniform(Absorptivity):
     value: Float[Array, ""]
     num_cells: int = eqx.field(static=True)
 
+    @override
     def coefficient(self):
         return jnp.full(self.num_cells, self.value)
 
@@ -30,6 +32,7 @@ class Tabulated(Absorptivity):
 
     values: Float[Array, " ncell"]
 
+    @override
     def coefficient(self):
         return self.values
 
@@ -40,5 +43,6 @@ class FromTemperature(Absorptivity):
     temperature: Float[Array, " ncell"]
     model: Callable[[Float[Array, " ncell"]], Float[Array, " ncell"]] = eqx.field(static=True)
 
+    @override
     def coefficient(self):
         return self.model(self.temperature)

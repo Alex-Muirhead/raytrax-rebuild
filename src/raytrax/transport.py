@@ -1,3 +1,5 @@
+from typing import NamedTuple
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,13 +9,23 @@ from raytrax import interactions as interaction
 from raytrax.interactions import Interactions
 from raytrax.paths import Path, RayState
 from raytrax.scene import Scene
+from raytrax.shapes import Flag, Index, KeyArray, Scalar
 from raytrax.sources import Sources
 from raytrax.sources import sample as sample_source
 
 
-def _keep(mask, new, old):
-    """Advance only the lanes that are still alive, broadcasting the mask."""
+def _keep(mask: Bool[Array, "..."], new: Array, old: Array) -> Array:
+    """Take `new` where `mask`, else `old`, broadcasting the mask up to `old`."""
     return jnp.where(mask.reshape(mask.shape + (1,) * (old.ndim - mask.ndim)), new, old)
+
+
+def _keep_tree[T](mask: Bool[Array, "..."], new: T, old: T) -> T:
+    """`_keep` leafwise over two pytrees of matching structure."""
+
+    def keep(new_leaf: Array, old_leaf: Array) -> Array:
+        return _keep(mask, new_leaf, old_leaf)
+
+    return jax.tree.map(keep, new, old)
 
 
 class Deposit(eqx.Module):
@@ -49,7 +61,7 @@ class Rays(eqx.Module):
     alive: Bool[Array, " nray"]
 
 
-def _refill(key, rays, launched, launch: Launch, scene: Scene, path: Path):
+def _refill(key: KeyArray, rays: Rays, launched: Index, launch: Launch, scene: Scene, path: Path) -> tuple[Rays, Index]:
     """Overwrite dead lanes with fresh rays, up to the remaining budget."""
     dead = ~rays.alive
     # Rank among dead lanes, so the budget is spent on a well-defined prefix.
@@ -61,13 +73,34 @@ def _refill(key, rays, launched, launch: Launch, scene: Scene, path: Path):
 
     return Rays(
         cell=_keep(take, cell, rays.cell),
-        state=jax.tree.map(lambda new, old: _keep(take, new, old), state, rays.state),
+        state=_keep_tree(take, state, rays.state),
         energy=_keep(take, jnp.full_like(rays.energy, launch.quantum), rays.energy),
         alive=rays.alive | take,
     ), launched + jnp.sum(take)
 
 
-def step(key, scene: Scene, path: Path, interactions: Interactions, absorptivity, cell, state: RayState, energy):
+class StepResult(NamedTuple):
+    """One cell crossing: where the ray went, and what it left behind."""
+
+    cell: Index
+    state: RayState
+    energy: Scalar
+    alive: Flag
+    cell_deposit: Scalar
+    face: Index
+    face_deposit: Scalar
+
+
+def step(
+    key: KeyArray,
+    scene: Scene,
+    path: Path,
+    interactions: Interactions,
+    absorptivity: Float[Array, " ncell"],
+    cell: Index,
+    state: RayState,
+    energy: Scalar,
+) -> StepResult:
     """Cross one cell, depositing continuously along the way."""
     normal, offset = scene.normal[cell], scene.offset[cell]
     slot, distance = path.crossing(normal, offset, state)
@@ -88,23 +121,27 @@ def step(key, scene: Scene, path: Path, interactions: Interactions, absorptivity
     hit_state, absorbed, terminated = interaction.apply(path, interactions, group, key, state, normal[slot])
 
     # An interior crossing just walks on; only a boundary consults the table.
-    state = jax.tree.map(lambda new, old: jnp.where(at_boundary, new, old), hit_state, state)
+    state = _keep_tree(at_boundary, hit_state, state)
     face_deposit = jnp.where(at_boundary, energy * absorbed, 0.0)
 
-    return (
-        jnp.where(at_boundary, cell, neighbour),
-        state,
-        energy - face_deposit,
-        ~(at_boundary & terminated),
-        cell_deposit,
-        face,
-        face_deposit,
+    return StepResult(
+        cell=jnp.where(at_boundary, cell, neighbour),
+        state=state,
+        energy=energy - face_deposit,
+        alive=~(at_boundary & terminated),
+        cell_deposit=cell_deposit,
+        face=face,
+        face_deposit=face_deposit,
     )
+
+
+# (step index, key, rays launched so far, the batch, the accumulator)
+type Carry = tuple[Index, KeyArray, Index, Rays, Deposit]
 
 
 @eqx.filter_jit
 def march(
-    key,
+    key: KeyArray,
     rays: Rays,
     scene: Scene,
     path: Path,
@@ -121,14 +158,12 @@ def march(
     refill dead lanes and keep the batch full.
     """
 
-    def body(carry):
+    def body(carry: Carry) -> Carry:
         index, key, launched, rays, deposit = carry
         key, subkey, refill_key = jax.random.split(key, 3)
         was_alive = rays.alive
 
-        cell, state, energy, alive, cell_deposit, face, face_deposit = jax.vmap(
-            step, in_axes=(0, None, None, None, None, 0, 0, 0)
-        )(
+        crossed = jax.vmap(step, in_axes=(0, None, None, None, None, 0, 0, 0))(
             jax.random.split(subkey, rays.cell.shape[0]),
             scene,
             path,
@@ -142,14 +177,14 @@ def march(
         # The scatter *must* be outside the vmap; inside it, XLA materialises a
         # full per-ray copy of the accumulator and memory use explodes.
         deposit = Deposit(
-            cells=deposit.cells.at[rays.cell].add(jnp.where(was_alive, cell_deposit, 0.0)),
-            faces=deposit.faces.at[face].add(jnp.where(was_alive, face_deposit, 0.0)),
+            cells=deposit.cells.at[rays.cell].add(jnp.where(was_alive, crossed.cell_deposit, 0.0)),
+            faces=deposit.faces.at[crossed.face].add(jnp.where(was_alive, crossed.face_deposit, 0.0)),
         )
         rays = Rays(
-            cell=_keep(was_alive, cell, rays.cell),
-            state=jax.tree.map(lambda new, old: _keep(was_alive, new, old), state, rays.state),
-            energy=_keep(was_alive, energy, rays.energy),
-            alive=was_alive & alive,
+            cell=_keep(was_alive, crossed.cell, rays.cell),
+            state=_keep_tree(was_alive, crossed.state, rays.state),
+            energy=_keep(was_alive, crossed.energy, rays.energy),
+            alive=was_alive & crossed.alive,
         )
 
         if launch is not None:
@@ -162,19 +197,20 @@ def march(
             )
         return index + 1, key, launched, rays, deposit
 
-    def cond(carry):
+    def cond(carry: Carry) -> Flag:
         index, _, launched, rays, _ = carry
         pending = launched < launch.budget if launch is not None else False
         return (index < max_steps) & (jnp.any(rays.alive) | pending)
 
     deposit = Deposit(cells=jnp.zeros(scene.num_cells), faces=jnp.zeros(scene.num_faces))
     launched = jnp.sum(rays.alive)
-    _, _, _, rays, deposit = jax.lax.while_loop(cond, body, (0, key, launched, rays, deposit))
+    start = jnp.asarray(0)
+    _, _, _, rays, deposit = jax.lax.while_loop(cond, body, (start, key, launched, rays, deposit))
     return rays, deposit
 
 
 def trace(
-    key,
+    key: KeyArray,
     scene: Scene,
     path: Path,
     interactions: Interactions,
