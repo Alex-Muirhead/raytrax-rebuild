@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -57,7 +57,9 @@ class Rays(eqx.Module):
     alive: Bool[Array, " nray"]
 
 
-def _refill(key: KeyArray, rays: Rays, launched: Index, launch: Launch, scene: Scene, path: Path) -> tuple[Rays, Index]:
+def _refill(
+    key: KeyArray, rays: Rays, launched: Index, launch: Launch, scene: Scene, path: Path[Any]
+) -> tuple[Rays, Index]:
     """Overwrite dead lanes with fresh rays, up to the remaining budget."""
     dead = ~rays.alive
     # Rank among dead lanes, so the budget is spent on a well-defined prefix.
@@ -90,7 +92,7 @@ class StepResult(NamedTuple):
 def step(
     key: KeyArray,
     scene: Scene,
-    path: Path,
+    path: Path[Any],
     interactions: Interactions,
     absorptivity: Float[Array, " ncell"],
     cell: Index,
@@ -99,14 +101,17 @@ def step(
 ) -> StepResult:
     """Cross one cell, depositing continuously along the way."""
     normal, offset = scene.normal[cell], scene.offset[cell]
-    slot, distance = path.crossing(normal, offset, state)
-    # A corner or grazing hit can give a small negative distance.
-    distance = jnp.maximum(distance, 0.0)
+    slot, parameter = path.crossing(normal, offset, state)
+    # A corner or grazing hit can give a small negative parameter.
+    parameter = jnp.maximum(parameter, 0.0)
 
-    transmission = jnp.exp(-absorptivity[cell] * distance)
+    # The parameter is a distance only for a straight ray, so read the length
+    # flown off `travel`, which every mode accumulates in 3D.
+    moved = path.advance(state, parameter)
+    transmission = jnp.exp(-absorptivity[cell] * (moved.travel - state.travel))
     cell_deposit = energy * (1 - transmission)
     energy = energy * transmission
-    state = path.advance(state, distance)
+    state = moved
 
     face = scene.face[cell, slot]
     neighbour = scene.neighbour[cell, slot]
@@ -138,7 +143,7 @@ def march(
     key: KeyArray,
     rays: Rays,
     scene: Scene,
-    path: Path,
+    path: Path[Any],
     interactions: Interactions,
     absorptivity: Float[Array, " ncell"],
     max_steps: int = 1000,
@@ -203,7 +208,7 @@ def march(
 def trace(
     key: KeyArray,
     scene: Scene,
-    path: Path,
+    path: Path[Any],
     interactions: Interactions,
     absorptivity: Float[Array, " ncell"],
     sources: Sources,

@@ -46,7 +46,7 @@ class TestSampling:
         _, _, scene = make(blocks, vertices)
         keys = jax.random.split(jax.random.key(0), 2000)
         cells = jax.random.randint(jax.random.key(1), (2000,), 0, scene.num_cells)
-        points = jax.vmap(sources.sample_cell_point, in_axes=(0, None, 0))(keys, scene, cells)
+        points = jax.vmap(sources.sample_cell_point, in_axes=(0, None, 0, None))(keys, scene, cells, LinearPath())
         assert bool(jnp.all(contains(scene, cells, points)))
 
     @pytest.mark.parametrize("dim,expected", [(3, 1.0), (2, np.pi / 4)])

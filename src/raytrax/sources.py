@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,26 +8,23 @@ from jaxtyping import Array, Float, Int
 
 from raytrax.mesh.topology import EXTERIOR
 from raytrax.paths import Path, RayState
-from raytrax.random import simplex
 from raytrax.scene import Scene
 from raytrax.shapes import Index, KeyArray, Vector
 
 
-def sample_cell_point(key: KeyArray, scene: Scene, cell: Index) -> Vector:
-    """Sample a point uniformly inside a cell, via its simplex decomposition."""
+def sample_cell_point(key: KeyArray, scene: Scene, cell: Index, path: Path[Any]) -> Vector:
+    """Sample a point inside a cell, via its simplex decomposition."""
     key_simplex, key_barycentric = jax.random.split(key)
     index = jax.random.choice(key_simplex, scene.simplex_weight.shape[1], p=scene.simplex_weight[cell])
-    corners = scene.vertices[scene.simplex_vertices[cell, index]]
-    weights = simplex(key_barycentric, scene.dim)
-    return weights[0] * scene.seed[cell] + weights[1:] @ corners
+    corners = jnp.concatenate([scene.seed[cell][None], scene.vertices[scene.simplex_vertices[cell, index]]])
+    return path.simplex_point(key_barycentric, corners)
 
 
-def sample_face_point(key: KeyArray, scene: Scene, face: Index) -> Vector:
-    """Sample a point uniformly on a face, via its fan decomposition."""
+def sample_face_point(key: KeyArray, scene: Scene, face: Index, path: Path[Any]) -> Vector:
+    """Sample a point on a face, via its fan decomposition."""
     key_fan, key_barycentric = jax.random.split(key)
     index = jax.random.choice(key_fan, scene.face_fan_weight.shape[1], p=scene.face_fan_weight[face])
-    corners = scene.vertices[scene.face_fan_vertices[face, index]]
-    return simplex(key_barycentric, scene.dim - 1) @ corners
+    return path.simplex_point(key_barycentric, scene.vertices[scene.face_fan_vertices[face, index]])
 
 
 class Sources(eqx.Module):
@@ -58,7 +57,7 @@ def build(cell_power: ArrayLike, face_power: ArrayLike | None = None, face: Arra
     )
 
 
-def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path) -> tuple[RayState, Index]:
+def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any]) -> tuple[RayState, Index]:
     """Draw one ray from the combined volume and surface emission.
 
     Volume emission is isotropic; surface emission is cosine-weighted about the
@@ -73,10 +72,10 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path) -> tuple[R
     # Traced under a static shape, so a volume-only problem never indexes into
     # the empty surface arrays.
     if sources.face_power.shape[0] == 0:
-        return RayState(
-            position=sample_cell_point(key_point, scene, source),
-            tangent=path.isotropic(key_direction, scene.dim),
-            travel=jnp.zeros(()),
+        return path.launch(
+            sample_cell_point(key_point, scene, source, path),
+            path.isotropic(key_direction),
+            jnp.zeros(()),
         ), source
 
     from_surface = source >= num_cells
@@ -88,16 +87,16 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path) -> tuple[R
     cells = scene.face_cells[face]
     inward = jnp.where(cells[0] == EXTERIOR, 1.0, -1.0) * scene.face_normal[face]
 
-    return RayState(
-        position=jnp.where(
+    return path.launch(
+        jnp.where(
             from_surface,
-            sample_face_point(key_point, scene, face),
-            sample_cell_point(key_point, scene, cell),
+            sample_face_point(key_point, scene, face, path),
+            sample_cell_point(key_point, scene, cell, path),
         ),
-        tangent=jnp.where(
+        jnp.where(
             from_surface,
             path.lambertian(key_direction, inward),
-            path.isotropic(key_direction, scene.dim),
+            path.isotropic(key_direction),
         ),
-        travel=jnp.zeros(()),
+        jnp.zeros(()),
     ), jnp.where(from_surface, cells.max(), cell)

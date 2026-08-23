@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from enum import IntEnum
 from types import MappingProxyType
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -47,7 +48,7 @@ def build(
 
 
 def apply(
-    path: Path,
+    path: Path[Any],
     interactions: Interactions,
     group: Index,
     key: KeyArray,
@@ -71,6 +72,6 @@ def apply(
 
     def diffuse(state: RayState) -> tuple[RayState, Scalar, Flag]:
         tangent = path.lambertian(key, -normal)
-        return RayState(state.position, tangent, state.travel), 1 - rho, jnp.bool_(False)
+        return path.launch(state.position, tangent, state.travel), 1 - rho, jnp.bool_(False)
 
     return jax.lax.switch(interactions.kind[group], [escape, absorb, specular, diffuse], state)
