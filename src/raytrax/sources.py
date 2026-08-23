@@ -67,7 +67,10 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any]) -> tu
     num_cells = sources.cell_power.shape[0]
 
     draw = jax.random.uniform(key_source)
+    # `searchsorted` is int32 even under x64, and the march compares this
+    # against the scene's own index arrays, so pin it to their width.
     source = jnp.minimum(jnp.searchsorted(sources.cumulative, draw), sources.cumulative.shape[0] - 1)
+    source = source.astype(scene.neighbour.dtype)
 
     # Traced under a static shape, so a volume-only problem never indexes into
     # the empty surface arrays.
