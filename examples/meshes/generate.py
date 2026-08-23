@@ -78,9 +78,41 @@ def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, outp
     print(f"wrote {output}")
 
 
+def meridian(radius: float = 1.0, length: float = 1.0, mesh_size: float = 0.12, output: Path = HERE / "meridian.msh"):
+    """The meridional half-plane of `cylinder`, for revolving about the x axis."""
+    gmsh.initialize()
+    gmsh.model.add("meridian")
+
+    surface = gmsh.model.occ.addRectangle(-length / 2, 0, 0, length, radius)
+    gmsh.model.occ.synchronize()
+    gmsh.model.addPhysicalGroup(dim=2, tags=[surface], name="meridian")
+
+    edges: dict[str, list[int]] = {}
+    for dim, tag in gmsh.model.getBoundary([(2, surface)], oriented=False):
+        x, y, _ = gmsh.model.occ.getCenterOfMass(abs(dim), abs(tag))
+        if abs(x + length / 2) < 1e-9:
+            name = "hot_end"
+        elif abs(x - length / 2) < 1e-9:
+            name = "wall"
+        elif abs(y) < 1e-9:
+            name = "axis"
+        else:
+            name = "lateral"
+        edges.setdefault(name, []).append(abs(tag))
+    for name, tags in edges.items():
+        gmsh.model.addPhysicalGroup(dim=1, tags=tags, name=name)
+
+    gmsh.option.setNumber("Mesh.MeshSizeFactor", mesh_size)
+    gmsh.model.mesh.generate(dim=2)
+    gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+    gmsh.write(str(output))
+    gmsh.finalize()
+    print(f"wrote {output}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("which", nargs="?", default="all", choices=["all", "cylinder", "plane"])
+    parser.add_argument("which", nargs="?", default="all", choices=["all", "cylinder", "plane", "meridian"])
     parser.add_argument("--mesh-size", type=float, default=None)
     args = parser.parse_args()
 
@@ -89,3 +121,5 @@ if __name__ == "__main__":
         cylinder(**size)
     if args.which in ("all", "plane"):
         plane(**size)
+    if args.which in ("all", "meridian"):
+        meridian(**size)

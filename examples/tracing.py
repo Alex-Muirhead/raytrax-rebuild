@@ -19,7 +19,8 @@ with app.setup:
     from raytrax import scene as scene_module
     from raytrax.interactions import Kind
     from raytrax.io import vtk
-    from raytrax.paths import LinearPath
+    from raytrax.mesh import geometry
+    from raytrax.paths import AxisymmetricPath, LinearPath
 
     MESHES = Path(__file__).parent / "meshes"
 
@@ -38,19 +39,22 @@ def _():
     - **plane** — 2D, deliberately **mixed**: quads on the lower half,
       triangles on the upper, sharing an interior face.
 
-    The 2D case is read as a **planar** domain: a slice through something
-    extruded infinitely out of plane, with directions still drawn on the full
-    sphere. Only the in-plane part of a direction is stored, so `|tangent| < 1`
-    and the distance flown exceeds the in-plane chord. Mirroring the lateral
-    boundary then makes it the same infinite slab as the cylinder, and both
-    domains are checked against the same closed form.
+    - **meridian** — the same solid as the cylinder, meshed as its 2D
+      meridional half-plane and read as **axisymmetric**.
+
+    A 2D mesh can be read two ways. **Planar** extrudes it infinitely out of
+    plane; only the in-plane part of a direction is stored, so `|tangent| < 1`
+    and the distance flown exceeds the in-plane chord. **Axisymmetric** revolves
+    it, and a straight 3D ray then projects to a *hyperbola* rather than a line.
+    Either way `travel` is the true 3D length, so all three domains are checked
+    against the same closed form.
     """)
     return
 
 
 @app.cell
 def _():
-    domain = mo.ui.dropdown(["cylinder", "plane"], value="cylinder", label="Domain")
+    domain = mo.ui.dropdown(["cylinder", "plane", "meridian"], value="cylinder", label="Domain")
     kappa = mo.ui.slider(0.1, 5.0, 0.1, value=1.0, label="Absorptivity κ")
     num_rays = mo.ui.dropdown(["50000", "200000", "1000000"], value="200000", label="Rays")
     mirror = mo.ui.checkbox(True, label="Mirror the lateral boundary")
@@ -65,13 +69,18 @@ def _(domain):
         raise FileNotFoundError(f"{path} missing — run `uv run python examples/meshes/generate.py`")
 
     mesh = vtk.read(path)
-    scene = scene_module.build(mesh.topology, mesh.geometry, mesh.groups)
-    scene_module.validate(mesh.topology, mesh.geometry)
-    return mesh, scene
+    # Revolving reweights cells as rings, which the axisymmetric path assumes.
+    axisymmetric = domain.value == "meridian"
+    geom = geometry.revolve(mesh.geometry) if axisymmetric else mesh.geometry
+    trace_path = AxisymmetricPath() if axisymmetric else LinearPath()
+
+    scene = scene_module.build(mesh.topology, geom, mesh.groups)
+    scene_module.validate(mesh.topology, geom)
+    return geom, mesh, scene, trace_path
 
 
 @app.cell(hide_code=True)
-def _(mesh):
+def _(geom, mesh):
     _counts = {
         element.name: int((mesh.topology.cell_block == index).sum())
         for index, element in enumerate(mesh.topology.block_elements)
@@ -84,13 +93,13 @@ def _(mesh):
     | faces | {mesh.topology.num_faces:,} |
     | face slots per cell | {mesh.topology.max_faces} |
     | boundary groups | {", ".join(mesh.groups.names[1:])} |
-    | total {"volume" if mesh.topology.dim == 3 else "area"} | {mesh.geometry.cells.volume.sum():.6f} |
+    | total volume | {geom.cells.volume.sum():.6f} |
     """)
     return
 
 
 @app.cell
-def _(mesh, mirror):
+def _(geom, mesh, mirror):
     # A black hot wall, a black cold wall, and a lateral surface that either
     # mirrors rays back in or lets them escape.
     lateral = Kind.SPECULAR if mirror.value else Kind.ESCAPE
@@ -100,16 +109,16 @@ def _(mesh, mirror):
     hot = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("hot_end"))
     source = sources.build(
         cell_power=jnp.zeros(mesh.topology.num_cells),
-        face_power=mesh.geometry.faces.area[hot],
+        face_power=geom.faces.area[hot],
         face=hot,
     )
     return hot, source, table
 
 
 @app.cell
-def _(kappa, mesh, num_rays, scene, source, table):
+def _(geom, kappa, mesh, num_rays, scene, source, table, trace_path):
     _rays = int(num_rays.value)
-    _path = LinearPath()
+    _path = trace_path
     key_launch, key_march = jax.random.split(jax.random.key(4))
 
     # Sampling explicitly rather than through `transport.trace` keeps the launch
@@ -126,17 +135,25 @@ def _(kappa, mesh, num_rays, scene, source, table):
     absorptivity = jnp.full(mesh.topology.num_cells, kappa.value)
 
     final, deposit = transport.march(key_march, initial, scene, _path, table, absorptivity, max_steps=4000)
-    heating = np.asarray(deposit.cells) / mesh.geometry.cells.volume
+    heating = np.asarray(deposit.cells) / geom.cells.volume
     return deposit, final, heating, initial
 
 
 @app.cell(hide_code=True)
-def _(deposit, final, initial, source):
+def _(deposit, final, initial, mesh, source):
     # A ray absorbed at a wall has already handed over its energy, so whatever a
     # dead ray still carries left the domain.
     _escaped = float(jnp.where(final.alive, 0.0, final.energy).sum())
     _flight = float(jnp.where(final.alive, final.energy, 0.0).sum())
     _total = float(deposit.cells.sum() + deposit.faces.sum()) + _escaped + _flight
+
+    # A ray only reaches r = 0 with no swirl at all, so anything landing on the
+    # axis group is a leak through the symmetry plane.
+    _axis = ""
+    if "axis" in mesh.groups.names:
+        _faces = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("axis"))
+        _leak = float(np.asarray(deposit.faces)[_faces].sum()) / float(source.total)
+        _axis = f"| through the axis | {_leak:.2e} (must be zero) |\n"
 
     mo.md(f"""
     | energy | |
@@ -145,6 +162,7 @@ def _(deposit, final, initial, source):
     | absorbed in gas | {float(deposit.cells.sum()):.6f} |
     | absorbed at walls | {float(deposit.faces.sum()):.6f} |
     | escaped | {_escaped:.6f} |
+    {_axis}
     | still in flight | {_flight:.6f} |
     | **accounted** | **{_total:.6f}** (error {abs(_total / float(source.total) - 1):.2e}) |
 
@@ -157,7 +175,7 @@ def _(deposit, final, initial, source):
 
 
 @app.cell(hide_code=True)
-def _(heating, kappa, mesh, mirror):
+def _(geom, heating, kappa, mesh, mirror):
     def _axial():
         fig, ax = plt.subplots(figsize=(7, 4))
         x = mesh.geometry.cells.centroid[:, 0]
@@ -165,13 +183,14 @@ def _(heating, kappa, mesh, mirror):
 
         bins = np.linspace(lo, hi, 26)
         index = np.clip(np.digitize(x, bins) - 1, 0, bins.size - 2)
-        energy = np.bincount(index, heating * mesh.geometry.cells.volume, bins.size - 1)
-        volume = np.bincount(index, mesh.geometry.cells.volume, bins.size - 1)
+        energy = np.bincount(index, heating * geom.cells.volume, bins.size - 1)
+        volume = np.bincount(index, geom.cells.volume, bins.size - 1)
         ax.stairs(energy / volume, bins, label="Monte-Carlo", lw=2)
 
         if mirror.value:
-            # Mirrored sides make this an infinite slab -- in 2D as much as in
-            # 3D, since planar extrusion is the slab's other two directions. The
+            # Mirrored sides make this an infinite slab in every mode: planar
+            # extrusion and revolution are both just the slab's other two
+            # directions. The
             # cell-averaged heating over [a, b] is 2 (E3(ka) - E3(kb)) / (b - a).
             near, far = kappa.value * (bins[:-1] - lo), kappa.value * (bins[1:] - lo)
             exact = 2 * (expn(3, near) - expn(3, far)) / (bins[1:] - bins[:-1])
@@ -264,9 +283,10 @@ def _(final, initial, mesh):
         edges = LineCollection(vertices[mesh.topology.face_vertices[:, :2]], linewidths=0.15, colors="0.75")
         ax.add_collection(edges)
 
-        # Start-to-finish chords. Two reasons the colour exceeds the length
-        # drawn: a mirrored ray flew a longer, folded path, and the part of the
-        # direction that points out of plane is not drawable at all.
+        # Start-to-finish chords. Three reasons the colour exceeds the length
+        # drawn: a mirrored ray flew a longer, folded path, the part of the
+        # direction that points out of plane is not drawable at all, and an
+        # axisymmetric ray followed a hyperbola rather than this chord.
         show = slice(0, 200)
         chords = np.stack([initial.state.position[show], final.state.position[show]], axis=1)
         paths = LineCollection(list(chords), cmap="viridis", linewidths=0.6)
@@ -283,9 +303,9 @@ def _(final, initial, mesh):
 
 
 @app.cell(hide_code=True)
-def _(deposit, domain, heating, hot, mesh):
+def _(deposit, domain, geom, heating, hot, mesh):
     _out = MESHES / f"{domain.value}_heating.vtu"
-    _face = np.asarray(deposit.faces) / mesh.geometry.faces.area
+    _face = np.asarray(deposit.faces) / np.where(geom.faces.area > 0, geom.faces.area, np.inf)
     vtk.write(_out, mesh, {"heating": heating})
     mo.md(f"Wrote `{_out.name}` — cell heating, openable in ParaView. Peak wall flux {_face[hot].max():.4f}.")
     return
