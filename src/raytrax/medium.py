@@ -7,12 +7,7 @@ from jaxtyping import Array, Float
 
 
 class Absorptivity(eqx.Module):
-    """Absorption coefficient per cell.
-
-    The march only ever asks for `coefficient()`, so where the field comes from
-    -- a constant, a column read out of the input file, or a model evaluated on
-    the temperature -- stays entirely on this side of the boundary.
-    """
+    """Absorption coefficient per cell."""
 
     def coefficient(self) -> Float[Array, " ncell"]:
         raise NotImplementedError

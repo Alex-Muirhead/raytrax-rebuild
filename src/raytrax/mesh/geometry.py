@@ -70,8 +70,7 @@ def face_geometry(topology: MeshTopology, vertices: np.ndarray) -> FaceGeometry:
             pieces = topology.face_vertices[rows, None, :2]
             piece_area = np.linalg.vector_norm(end - ref, axis=-1)[:, None]
         else:
-            # Summing the fan's triangle normals is exact for a planar polygon
-            # and gives the best-fit plane for a warped quad.
+            # Exact for a planar polygon, best-fit plane for a warped quad.
             fan = _fan(points)
             fan_normal = _triangle_normals(fan)
             fan_area = np.linalg.vector_norm(fan_normal, axis=-1)
@@ -94,8 +93,8 @@ def face_geometry(topology: MeshTopology, vertices: np.ndarray) -> FaceGeometry:
             offsets = np.einsum("fvd,fd->fv", points - centre[:, None, :], unit)
             flatness[rows] = np.abs(offsets).max(axis=1) / np.sqrt(magnitude)
 
-    # Anchoring the plane on the centroid rather than a corner keeps it centred
-    # when a quad is slightly warped.
+    # Anchored on the centroid, not a corner, so a slightly warped quad stays
+    # centred.
     offset = np.einsum("fd,fd->f", centroid, normal)
     return FaceGeometry(
         centroid=centroid,
@@ -111,9 +110,8 @@ def face_geometry(topology: MeshTopology, vertices: np.ndarray) -> FaceGeometry:
 def cell_geometry(topology: MeshTopology, vertices: np.ndarray) -> CellGeometry:
     """Volume, centroid and a simplex decomposition of every cell.
 
-    Each cell splits into simplices spanning a seed point and one triangle of a
-    face fan. Every face is wound outward, so a simplex has positive volume
-    exactly when the cell is convex and correctly oriented.
+    A simplex has positive volume exactly when the cell is convex and correctly
+    oriented, which `scene.validate` checks.
     """
     dim = topology.dim
     face_verts = cell_face_vertices(topology)

@@ -31,10 +31,8 @@ def sample_face_point(key: KeyArray, scene: Scene, face: Index) -> Vector:
 class Sources(eqx.Module):
     """Unnormalised emitted power from cell volumes and from boundary faces.
 
-    Both are in the same units so a single draw can choose between them. The
-    cumulative distribution is precomputed: drawing by `searchsorted` is
-    logarithmic in the number of emitters, where weighted `choice` is linear,
-    and refilling dead lanes redraws often enough for that to dominate.
+    Both are in the same units, so a single draw over `cumulative` picks between
+    them.
     """
 
     cell_power: Float[Array, " ncell"]
@@ -64,9 +62,7 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path) -> tuple[R
     """Draw one ray from the combined volume and surface emission.
 
     Volume emission is isotropic; surface emission is cosine-weighted about the
-    inward normal. Both go through `path`, which draws in 3D and keeps the part
-    that lies in the mesh -- so on a 2D mesh the tangent comes back shorter than
-    unit rather than confined to the plane.
+    inward normal.
     """
     key_source, key_point, key_direction = jax.random.split(key, 3)
     num_cells = sources.cell_power.shape[0]
@@ -74,8 +70,8 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path) -> tuple[R
     draw = jax.random.uniform(key_source)
     source = jnp.minimum(jnp.searchsorted(sources.cumulative, draw), sources.cumulative.shape[0] - 1)
 
-    # Shapes are static, so a volume-only problem never pays for -- or indexes
-    # into -- the surface branch.
+    # Traced under a static shape, so a volume-only problem never indexes into
+    # the empty surface arrays.
     if sources.face_power.shape[0] == 0:
         return RayState(
             position=sample_cell_point(key_point, scene, source),
@@ -87,8 +83,8 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path) -> tuple[R
     cell = jnp.where(from_surface, 0, source)
     face = sources.face[jnp.where(from_surface, source - num_cells, 0)]
 
-    # The stored normal points out of face_cells[:, 0]; whichever column is
-    # EXTERIOR tells us which way is back into the domain.
+    # The stored normal points out of face_cells[:, 0], so the EXTERIOR column
+    # says which way is back into the domain.
     cells = scene.face_cells[face]
     inward = jnp.where(cells[0] == EXTERIOR, 1.0, -1.0) * scene.face_normal[face]
 

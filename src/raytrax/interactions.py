@@ -56,9 +56,7 @@ def apply(
 ) -> tuple[RayState, Scalar, Flag]:
     """Resolve a boundary hit into (state, absorbed fraction, terminated).
 
-    `normal` is the outward unit normal of the face the ray left through. Adding
-    a behaviour means appending a branch here and a member to `Kind`; the march
-    itself never learns what the boundary kinds are.
+    `normal` is the outward unit normal of the face the ray left through.
     """
     rho = interactions.reflectivity[group]
 

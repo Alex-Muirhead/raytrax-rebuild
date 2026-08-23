@@ -71,8 +71,7 @@ def _face_groups(mesh_topology: topology.MeshTopology, source: meshio.Mesh) -> d
 
 def write(path: str | Path, mesh: Mesh, cell_data: dict[str, np.ndarray]) -> None:
     """Write the mesh back out with extra cell fields, split by original block."""
-    # Annotated because meshio's `cells` parameter is an invariant list, so a
-    # list[tuple[str, ndarray]] is not assignable to it.
+    # Annotated because meshio's `cells` parameter is an invariant list.
     blocks: list[meshio.CellBlock | tuple[str, ArrayLike]] = [
         (element.name, mesh.topology.cell_vertices[mesh.topology.cell_block == index, : element.num_vertices])
         for index, element in enumerate(mesh.topology.block_elements)

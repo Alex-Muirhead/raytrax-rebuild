@@ -38,12 +38,8 @@ class Deposit(eqx.Module):
 class Launch(eqx.Module):
     """Refill dead lanes from a source until a launch budget is spent.
 
-    A step costs O(lanes), not O(alive), so a lane whose ray has terminated is
-    pure waste. Refilling keeps the batch full instead of draining it, which
-    turns the occupancy fraction into the speedup.
-
-    Every launched ray carries exactly `quantum`, so the deposited total stays
-    `sources.total` however the launches happen to land across the lanes.
+    Every launched ray carries exactly `quantum`, so the deposited total is
+    independent of how launches land across the lanes.
     """
 
     sources: Sources
@@ -104,8 +100,7 @@ def step(
     """Cross one cell, depositing continuously along the way."""
     normal, offset = scene.normal[cell], scene.offset[cell]
     slot, distance = path.crossing(normal, offset, state)
-    # A corner or grazing hit can give a small negative distance; clamping keeps
-    # the deposited energy non-negative without pushing the ray off the plane.
+    # A corner or grazing hit can give a small negative distance.
     distance = jnp.maximum(distance, 0.0)
 
     transmission = jnp.exp(-absorptivity[cell] * distance)
@@ -120,7 +115,6 @@ def step(
     group = jnp.where(at_boundary, scene.face_group[face], 0)
     hit_state, absorbed, terminated = interaction.apply(path, interactions, group, key, state, normal[slot])
 
-    # An interior crossing just walks on; only a boundary consults the table.
     state = _keep_tree(at_boundary, hit_state, state)
     face_deposit = jnp.where(at_boundary, energy * absorbed, 0.0)
 
@@ -152,10 +146,9 @@ def march(
 ) -> tuple[Rays, Deposit]:
     """Walk rays until they terminate or `max_steps` runs out.
 
-    Exiting on `any(alive)` makes `max_steps` a safety net rather than a cost:
-    the batch pays for its longest ray, not for the bound. It does not make dead
-    rays free -- a step costs O(lanes), not O(alive) -- so pass a `Launch` to
-    refill dead lanes and keep the batch full.
+    `max_steps` is a safety net, not a cost: the batch pays for its longest ray.
+    A step costs O(lanes) rather than O(alive), so pass a `Launch` to refill
+    dead lanes and keep the batch full.
     """
 
     def body(carry: Carry) -> Carry:
@@ -188,8 +181,6 @@ def march(
         )
 
         if launch is not None:
-            # Outside the vmap, so this is a real branch and costs nothing on
-            # the steps it skips.
             rays, launched = jax.lax.cond(
                 (index % launch.interval == 0) & (launched < launch.budget),
                 lambda: _refill(refill_key, rays, launched, launch, scene, path),
@@ -223,11 +214,9 @@ def trace(
 ) -> tuple[Rays, Deposit]:
     """Trace `num_rays` rays through `lanes` lanes, refilling as they terminate.
 
-    `lanes` trades memory against occupancy; it defaults to tracing everything
-    at once, which leaves lanes idle as rays finish. Refilling every step costs
-    more in sampling than it recovers in occupancy, so `refill_interval` lets
-    lanes sit briefly idle instead -- 8 measured best on a shock-layer case, but
-    it is worth sweeping on a new problem.
+    `lanes` trades memory against occupancy, defaulting to tracing everything at
+    once. `refill_interval` is worth sweeping on a new problem; sampling costs
+    enough that refilling every step is a loss.
     """
     lanes = min(num_rays, lanes or num_rays)
     key_launch, key_march = jax.random.split(key)

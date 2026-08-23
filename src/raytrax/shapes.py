@@ -1,14 +1,9 @@
-"""Named jaxtyping aliases for the shapes that recur across the device side.
-
-Spelled out, an override's signature is long enough that nobody repeats it, and
-an unannotated override is never checked against its base. Naming them is what
-makes repeating them cheap.
-
-Plain assignments rather than PEP 695 `type` statements, so jaxtyping can still
-resolve them at runtime under `install_import_hook`.
-"""
+"""Named jaxtyping aliases for the shapes that recur across the device side."""
 
 from jaxtyping import Array, Bool, Float, Int, Key
+
+# Plain assignments, not PEP 695 `type` statements: jaxtyping has to resolve
+# these at runtime under `install_import_hook`.
 
 # Every key in the codebase comes from `jax.random.key`, i.e. a typed key.
 KeyArray = Key[Array, ""]

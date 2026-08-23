@@ -7,23 +7,21 @@ from raytrax.mesh.boundaries import DEFAULT_GROUP, BoundaryGroups
 from raytrax.mesh.geometry import MeshGeometry
 from raytrax.mesh.topology import EXTERIOR, MeshTopology
 
-# A face slot a ray can never leave through, used to pad cells with few faces.
-# `crossing` rejects it for free: a zero normal is never aligned with a tangent.
+# Pads cells with few faces. `crossing` rejects it for free: a zero normal is
+# never aligned with a tangent.
 NULL_HALFSPACE = 0.0
 
 
 class Scene(eqx.Module):
     """Flat device-side arrays: exactly what the ray march touches, nothing else.
 
-    Cells are padded to a fixed number of face slots. Padded slots hold a null
-    half-space, so mixed element types cost one rectangular array rather than a
-    ragged one.
+    Cells are padded to a fixed number of face slots, so mixed element types
+    still fit rectangular arrays.
     """
 
     dim: int = eqx.field(static=True)
 
-    # Half-space form of every cell, already signed outward. Materialised once
-    # because the march gathers from it for every ray on every step.
+    # Half-space form of every cell, already signed outward.
     normal: Float[Array, "ncell nslot ndim"]
     offset: Float[Array, "ncell nslot"]
     neighbour: Int[Array, "ncell nslot"]
@@ -114,8 +112,8 @@ def contains(
 ) -> Bool[Array, "..."]:
     """Whether a point lies inside a cell's half-spaces.
 
-    A point sitting exactly on a shared face -- which is where every crossing
-    leaves a ray -- needs a tolerance to count as inside.
+    A point left on a shared face by a crossing needs a tolerance to count as
+    inside.
     """
     distance = jnp.einsum("...sd,...d->...s", scene.normal[cell], point) - scene.offset[cell]
     return jnp.all(distance <= tolerance, axis=-1)

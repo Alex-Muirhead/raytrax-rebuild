@@ -17,9 +17,7 @@ Block = tuple[str, np.ndarray]
 class MeshTopology:
     """Index-only description of a mixed-element mesh.
 
-    Cells are padded to `max_faces` slots; unused slots are masked by
-    `cell_face_valid` and carry an EXTERIOR neighbour so that a degenerate
-    lookup escapes rather than walking somewhere wrong.
+    Cells are padded to `max_faces` slots, masked by `cell_face_valid`.
     """
 
     dim: int
@@ -90,8 +88,8 @@ def build(blocks: Sequence[Block]) -> MeshTopology:
     cell_face = np.full((num_cells, max_faces), -1, dtype=np.int64)
     reversed_bit = np.zeros((num_cells, max_faces), dtype=np.int64)
 
-    # Deduplicate faces separately per vertex count so the keys stay rectangular;
-    # this is what lets tets, pyramids, wedges and hexes share one mesh.
+    # Deduplicate per vertex count, so the keys stay rectangular across a mesh
+    # mixing tets, pyramids, wedges and hexes.
     face_key_groups: list[np.ndarray] = []
     face_count_groups: list[np.ndarray] = []
     for num_verts in np.unique(slot_num_verts[cell_face_valid]):
@@ -111,9 +109,8 @@ def build(blocks: Sequence[Block]) -> MeshTopology:
     face_num_verts = np.concatenate(face_count_groups)
     num_faces = len(face_vertices)
 
-    # Knit the two directions together. A face's two cells wind it oppositely, so
-    # the reversed bit picks the column, and the stored normal is outward from
-    # whichever cell landed in column 0.
+    # A face's two cells wind it oppositely, so the reversed bit picks the
+    # column, and the stored normal is outward from whichever lands in column 0.
     cell_ids = np.broadcast_to(np.arange(num_cells)[:, None], cell_face.shape)
     face_cells = np.full((num_faces, 2), EXTERIOR, dtype=np.int64)
     face_cells[cell_face[cell_face_valid], reversed_bit[cell_face_valid]] = cell_ids[cell_face_valid]
@@ -145,8 +142,8 @@ def build(blocks: Sequence[Block]) -> MeshTopology:
 def cell_face_vertices(topology: MeshTopology) -> np.ndarray:
     """[ncell, max_faces, max_face_verts] face vertices in each cell's own winding.
 
-    Rebuilt on demand rather than stored: it is only needed while building
-    geometry, and it is the largest array in the pipeline.
+    The largest array in the pipeline, so it is rebuilt on demand rather than
+    stored.
     """
     max_face_verts = topology.face_vertices.shape[1]
     verts = np.full((topology.num_cells, topology.max_faces, max_face_verts), -1, dtype=np.int64)

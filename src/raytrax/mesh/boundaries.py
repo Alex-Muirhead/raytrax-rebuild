@@ -13,10 +13,7 @@ DEFAULT_GROUP = 0
 
 @dataclass(frozen=True)
 class BoundaryGroups:
-    """Which interaction group each face belongs to.
-
-    Interior faces keep the default group; nothing ever reads it for them.
-    """
+    """Which interaction group each face belongs to."""
 
     names: tuple[str, ...]
     face_group: Int[np.ndarray, " nface"]

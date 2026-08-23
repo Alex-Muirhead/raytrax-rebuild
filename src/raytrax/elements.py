@@ -80,8 +80,6 @@ ELEMENT_TYPES: dict[str, ElementType] = {
     element.name: element for element in (TRIANGLE, QUAD, TETRA, HEXAHEDRON, WEDGE, PYRAMID)
 }
 
-# meshio spells the 8-node axis-aligned hexahedron "hexahedron" either way, but
-# VTK_VOXEL uses a different vertex order that we do not accept silently.
 FACE_ELEMENT_NAMES: dict[int, str] = {2: "line", 3: "triangle", 4: "quad"}
 
 

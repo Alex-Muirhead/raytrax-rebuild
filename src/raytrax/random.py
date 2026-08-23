@@ -21,8 +21,7 @@ def simplex(key: KeyArray, ndim: int, shape: tuple[int, ...] = ()) -> Float[Arra
 def cosine_hemisphere(key: KeyArray, normal: Float[Array, "... ndim"]) -> Float[Array, "... ndim"]:
     """Sample a cosine-weighted (Lambertian) direction about `normal`.
 
-    Exact in 3D, which is where every caller uses it: `Path.lambertian` embeds an
-    in-plane normal before drawing, rather than sampling in the plane.
+    Only exact in 3D, which is where every caller uses it.
     """
     direction = normal + sphere(key, ndim=normal.shape[-1])
     return direction / jnp.linalg.vector_norm(direction, axis=-1, keepdims=True)

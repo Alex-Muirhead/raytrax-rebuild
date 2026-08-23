@@ -14,14 +14,8 @@ def _lex_less(a: Int[np.ndarray, "n k"], b: Int[np.ndarray, "n k"]) -> Bool[np.n
 def canonical_cycle(verts: Int[np.ndarray, "n k"]) -> tuple[Int[np.ndarray, "n k"], Int[np.ndarray, " n"]]:
     """Canonically wind each face, returning (keys, reversed_bit).
 
-    Two cells sharing a face present it with opposite winding, so they agree on
-    the key and disagree on the bit. Permutation parity cannot express this: for
-    a quad the two windings routinely sort with the *same* parity, which silently
-    collapses both cells into one slot of the face->cell table.
-
-    The canonical winding starts at the lowest vertex id and walks whichever
-    direction is lexicographically smaller, so the key keeps a real winding and
-    can be used directly for face geometry.
+    Two cells sharing a face agree on the key and disagree on the bit. The key
+    keeps a real winding, so face geometry can use it directly.
     """
     verts = np.asarray(verts)
     _, num_verts = verts.shape
@@ -46,7 +40,7 @@ def lex_unique(
     return_inverse: bool = False,
     return_counts: bool = False,
 ) -> tuple[np.ndarray, ...]:
-    """A stripped-down version of numpy.unique that uses lexsort on keys.
+    """A stripped-down `numpy.unique` over rows, by lexsort.
 
     Returns the unique keys, followed by whichever of index, inverse and counts
     were asked for, in that order.
