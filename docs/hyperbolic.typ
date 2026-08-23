@@ -598,12 +598,15 @@ digits over $2 times 10^7$ samples.
 #table(
   columns: 5,
   table.header([*$a\/r$*], [*$P$(below)*], [*median*], [*max*], [*failures*]),
-  [$10^(-2)$], [$6.4 times 10^(-3)$], [$1.1 times 10^(-16)$], [$1.3 times 10^(-14)$], [0 / 500],
-  [$10^(-4)$], [$6.4 times 10^(-5)$], [$1.6 times 10^(-16)$], [$3.7 times 10^(-15)$], [0 / 500],
-  [$10^(-8)$], [$6.4 times 10^(-9)$], [$1.1 times 10^(-16)$], [$5.8 times 10^(-15)$], [0 / 500],
-  [$10^(-12)$], [$6.4 times 10^(-13)$], [$1.1 times 10^(-16)$], [$2.3 times 10^(-15)$], [0 / 500],
-  [$10^(-16)$], [$6.4 times 10^(-17)$], [$1.2 times 10^(-16)$], [$7.3 times 10^(-15)$], [0 / 500],
+  [isotropic], [--], [$2.2 times 10^(-16)$], [$2.0 times 10^(-15)$], [0 / 500],
+  [$10^(-2)$], [$6.4 times 10^(-3)$], [$1.4 times 10^(-16)$], [$4.8 times 10^(-15)$], [0 / 500],
+  [$10^(-4)$], [$6.4 times 10^(-5)$], [$1.6 times 10^(-16)$], [$6.6 times 10^(-15)$], [0 / 500],
+  [$10^(-8)$], [$6.4 times 10^(-9)$], [$1.6 times 10^(-16)$], [$1.3 times 10^(-14)$], [0 / 500],
+  [$10^(-12)$], [$6.4 times 10^(-13)$], [$1.1 times 10^(-16)$], [$2.1 times 10^(-14)$], [0 / 500],
+  [$10^(-16)$], [$6.4 times 10^(-17)$], [$1.1 times 10^(-16)$], [$3.7 times 10^(-15)$], [0 / 500],
 )
+
+Regenerate with `uv run python scripts/hyperbolic_accuracy.py`.
 
 Three findings worth recording, because each cost an implementation attempt:
 

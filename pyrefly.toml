@@ -1,8 +1,9 @@
 # Strict over the library. Sub-configs relax only strict's annotation-completeness
-# checks for tests and examples: `examples/` is marimo-generated cell signatures,
-# which there is no point annotating because marimo rewrites them, and test
-# helpers are not a public surface. Everything else strict checks -- override
-# validation, call shapes, assignments -- still applies everywhere.
+# checks for tests, examples and scripts: `examples/` is marimo-generated cell
+# signatures, which there is no point annotating because marimo rewrites them,
+# and test helpers and one-off studies are not a public surface. Everything else
+# strict checks -- override validation, call shapes, assignments -- still applies
+# everywhere.
 preset = "strict"
 search-path = ["src", "tests"]
 
@@ -16,6 +17,14 @@ implicit-any-empty-container = false
 
 [[sub-config]]
 matches = "examples/**"
+
+[sub-config.errors]
+implicit-any-parameter = false
+implicit-any-lambda = false
+implicit-any-empty-container = false
+
+[[sub-config]]
+matches = "scripts/**"
 
 [sub-config.errors]
 implicit-any-parameter = false
