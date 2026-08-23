@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from jaxtyping import Float, Int
@@ -156,4 +156,52 @@ def build(topology: MeshTopology, vertices: np.ndarray) -> MeshGeometry:
         vertices=vertices,
         faces=face_geometry(topology, vertices),
         cells=cell_geometry(topology, vertices),
+    )
+
+
+def revolve(geometry: MeshGeometry, radial: int = 1) -> MeshGeometry:
+    """Reweight a meridional mesh as the solid it sweeps out when revolved.
+
+    Volumes and areas become those of the ring and the surface of revolution,
+    and the decomposition weights with them, so a draw over either is uniform in
+    the revolved solid rather than in the plane. Positions are left meridional.
+    """
+    dim = geometry.vertices.shape[1]
+    if dim != 2:
+        raise ValueError(f"Revolving needs a 2D mesh, got {dim}D")
+    if np.any(geometry.vertices[:, radial] < 0):
+        raise ValueError(f"{np.sum(geometry.vertices[:, radial] < 0)} vertices lie at negative radius")
+
+    cells, faces = geometry.cells, geometry.faces
+
+    # Pappus: a piece sweeps 2 pi rbar times its own measure, and the simplex
+    # centroid the volumes already came from is exactly the rbar it needs.
+    corners = geometry.vertices[np.maximum(cells.simplex_vertices, 0)]
+    simplex_radius = (corners[..., radial].sum(axis=-1) + cells.seed[:, None, radial]) / (dim + 1)
+    cell_ring = cells.simplex_weight * simplex_radius
+    cell_scale = cell_ring.sum(axis=1)
+    if np.any(cell_scale <= 0):
+        raise ValueError(f"{np.sum(cell_scale <= 0)} cells sweep no volume; they lie on the axis")
+
+    fan_radius = geometry.vertices[np.maximum(faces.fan_vertices, 0)][..., radial].mean(axis=-1)
+    face_ring = faces.fan_weight * fan_radius
+    face_scale = face_ring.sum(axis=1)
+    # A face lying on the axis sweeps nothing. Its area is genuinely zero, so it
+    # can never be drawn from; keep its meridional weights rather than divide.
+    swept = face_scale > 0
+
+    return MeshGeometry(
+        vertices=geometry.vertices,
+        faces=replace(
+            faces,
+            area=2 * math.pi * faces.area * face_scale,
+            fan_weight=np.where(
+                swept[:, None], face_ring / np.where(swept, face_scale, 1.0)[:, None], faces.fan_weight
+            ),
+        ),
+        cells=replace(
+            cells,
+            volume=2 * math.pi * cells.volume * cell_scale,
+            simplex_weight=cell_ring / cell_scale[:, None],
+        ),
     )

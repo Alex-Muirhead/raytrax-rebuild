@@ -6,8 +6,10 @@ from meshes import brick, make, mixed_3d
 from pytest import approx
 
 from raytrax import interactions, sources, transport
+from raytrax import scene as scene_module
 from raytrax.interactions import Kind
-from raytrax.paths import LinearPath
+from raytrax.mesh import boundaries, geometry, topology
+from raytrax.paths import AxisymmetricPath, LinearPath
 from raytrax.scene import contains
 
 
@@ -20,10 +22,11 @@ def uniform_boundary(kind, reflectivity=1.0):
     return interactions.Interactions(kind=jnp.array([kind]), reflectivity=jnp.array([reflectivity]))
 
 
-def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400):
+def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None):
+    path = path or LinearPath()
     rays_key, march_key = jax.random.split(jax.random.key(seed))
     state, cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-        jax.random.split(rays_key, num_rays), source, scene, LinearPath()
+        jax.random.split(rays_key, num_rays), source, scene, path
     )
     rays = transport.Rays(
         cell=cell,
@@ -32,7 +35,7 @@ def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_step
         alive=jnp.ones(num_rays, dtype=bool),
     )
     absorptivity = jnp.full(scene.num_cells, kappa)
-    return transport.march(march_key, rays, scene, LinearPath(), kinds_table, absorptivity, max_steps=max_steps)
+    return transport.march(march_key, rays, scene, path, kinds_table, absorptivity, max_steps=max_steps)
 
 
 class TestSampling:
@@ -236,3 +239,75 @@ class TestReducedState:
         chord = jnp.linalg.vector_norm(final.state.position - rays.state.position, axis=-1)
         speed = jnp.linalg.vector_norm(rays.state.tangent, axis=-1)
         assert np.allclose(np.asarray(chord), np.asarray(final.state.travel * speed), rtol=1e-4)
+
+
+class TestAxisymmetric:
+    """A 2D mesh read as revolved. The geometry must be the ring's, and the
+    march must not be able to leak through the symmetry axis."""
+
+    def revolved(self, shape=(4, 4)):
+        """A brick spanning the axis, weighted as the solid it sweeps."""
+        blocks, vertices = brick(shape, dim=2)
+        mesh_topology = topology.build(blocks)
+        mesh_geometry = geometry.revolve(geometry.build(mesh_topology, vertices))
+        on_axis = np.flatnonzero(
+            mesh_topology.is_boundary & np.isclose(geometry.build(mesh_topology, vertices).faces.centroid[:, 1], 0.0)
+        )
+        tagged = boundaries.tag(mesh_topology, {"axis": on_axis})
+        return mesh_geometry, tagged, scene_module.build(mesh_topology, mesh_geometry, tagged)
+
+    def test_sampled_points_fill_the_ring_not_the_slice(self):
+        """Uniform in the ring means the density carries a factor r, so the mean
+        radius exceeds the meridional one. For a slab from a to b that is
+        (integral r^2)/(integral r), which is 14/9 over [1, 2]."""
+        vertices = np.array([[0, 1], [1, 1], [1, 2], [0, 2]], dtype=float)
+        mesh_topology = topology.build([("quad", np.arange(4)[None, :])])
+        mesh_geometry = geometry.revolve(geometry.build(mesh_topology, vertices))
+        scene = scene_module.build(mesh_topology, mesh_geometry)
+
+        keys = jax.random.split(jax.random.key(0), 200_000)
+        cells = jnp.zeros(200_000, dtype=int)
+        points = jax.vmap(sources.sample_cell_point, in_axes=(0, None, 0, None))(keys, scene, cells, AxisymmetricPath())
+        assert float(points[:, 1].mean()) == approx(14 / 9, abs=3e-3)
+        assert bool(jnp.all(contains(scene, cells, points)))
+
+    def test_sealed_box_conserves_energy(self):
+        """The same invariant as the Cartesian modes, over ring volumes and with
+        cells that sit against the axis."""
+        mesh_geometry, _, scene = self.revolved()
+        table = uniform_boundary(Kind.ABSORB)
+        source = sources.build(mesh_geometry.cells.volume)
+        rays, deposit = run(scene, source, table, path=AxisymmetricPath(), max_steps=600)
+
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-4)
+        assert not bool(jnp.any(rays.alive)), "rays ran out of steps"
+
+    def test_nothing_escapes_through_the_axis(self):
+        """A ray only reaches r = 0 with no swirl at all, which is measure zero.
+        Any deposit on the axis group is a leak through the symmetry plane."""
+        mesh_geometry, groups, scene = self.revolved()
+        table = uniform_boundary(Kind.ABSORB)
+        _, deposit = run(
+            scene, sources.build(mesh_geometry.cells.volume), table, path=AxisymmetricPath(), max_steps=600
+        )
+
+        on_axis = np.flatnonzero(groups.face_group == groups.index("axis"))
+        assert float(np.asarray(deposit.faces)[on_axis].sum()) == approx(0.0)
+        assert float(deposit.faces.sum()) > 0, "the other walls must still absorb"
+
+    def test_rays_land_inside_their_next_cell(self):
+        """The hyperbolic march is only sound if a crossing arrives where the
+        topology says it should."""
+        mesh_geometry, _, scene = self.revolved()
+        path = AxisymmetricPath()
+        num = 4000
+        keys = jax.random.split(jax.random.key(2), num)
+        state, cells = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
+            keys, sources.build(mesh_geometry.cells.volume), scene, path
+        )
+        nxt, moved, *_ = jax.vmap(transport.step, in_axes=(0, None, None, None, None, 0, 0, 0))(
+            keys, scene, path, uniform_boundary(Kind.ABSORB), jnp.zeros(scene.num_cells), cells, state, jnp.ones(num)
+        )
+        interior = nxt != cells
+        assert bool(jnp.any(interior))
+        assert bool(jnp.all(contains(scene, nxt[interior], moved.position[interior], tolerance=1e-9)))

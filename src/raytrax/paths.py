@@ -2,6 +2,7 @@ import abc
 from typing import ClassVar, override
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from equinox._misc import default_floating_dtype
@@ -122,6 +123,18 @@ class AxisymmetricPath(Path[HyperbolicState]):
     A straight 3D ray projects to a hyperbola. The crossing parameter is a step
     in the hyperbola's own parameter, not a distance; `advance` converts it.
     """
+
+    @override
+    def simplex_point(self, key: KeyArray, corners: Float[Array, "ncorner ndim"]) -> Vector:
+        # A ring is not uniform in the meridional plane: the density carries a
+        # factor r, making it a mixture over the corners. Drawing one dimension
+        # up and folding the spare weight into corner `i` is Dirichlet with
+        # alpha_i = 2 and the rest 1, which is that mixture's component.
+        key_corner, key_weights = jax.random.split(key)
+        radius = corners[:, RADIAL]
+        corner = jax.random.choice(key_corner, corners.shape[0], p=radius / radius.sum())
+        weights = simplex(key_weights, corners.shape[0])
+        return weights[1:].at[corner].add(weights[0]) @ corners
 
     @override
     def launch(self, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> HyperbolicState:
