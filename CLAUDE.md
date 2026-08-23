@@ -35,5 +35,12 @@ manageable:
 - Package manager **uv** — `uv run pytest`, `uv run python ...`
 - Format and organise imports with **ruff**; type-check with **pyrefly**
 - Version control is **jj**, not git (`jj st`, `jj diff`, `jj describe`)
-- Keep docstrings and comments short. Prefer invariance tests over piles of
-  hardcoded cases; if a specific case is tested, say what it is looking for.
+- Docstrings say *what*, in one line, plus at most one sentence of caveat a
+  caller needs. Never how it works or why it was designed that way — that goes
+  in the commit message or `docs/`, and real invariants go in this file.
+- Comment only what the code cannot say for itself, chiefly framework oddities,
+  and say *why* the code deviates from idiom.
+- Commit messages are one-liners. Add a body only to record a fact the diff
+  cannot show, and keep it to a sentence or two.
+- Prefer invariance tests over piles of hardcoded cases; if a specific case is
+  tested, say what it is looking for.
