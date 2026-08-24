@@ -8,23 +8,20 @@ from jaxtyping import Array, Float, Int
 
 from raytrax.mesh.topology import EXTERIOR
 from raytrax.paths import Path, RayState
-from raytrax.scene import Scene
+from raytrax.scene import Scene, Simplices
 from raytrax.shapes import Index, KeyArray, Vector
 
 
-def sample_cell_point(key: KeyArray, scene: Scene, cell: Index, path: Path[Any]) -> Vector:
-    """Sample a point inside a cell, via its simplex decomposition."""
+def sample_point(
+    key: KeyArray, vertices: Float[Array, "nvert ndim"], simplices: Simplices, row: Index, path: Path[Any]
+) -> Vector:
+    """Sample a point uniformly over one row's simplex decomposition."""
     key_simplex, key_barycentric = jax.random.split(key)
-    index = jax.random.choice(key_simplex, scene.simplex_weight.shape[1], p=scene.simplex_weight[cell])
-    corners = jnp.concatenate([scene.seed[cell][None], scene.vertices[scene.simplex_vertices[cell, index]]])
+    index = jax.random.choice(key_simplex, simplices.weight.shape[1], p=simplices.weight[row])
+    corners = vertices[simplices.vertices[row, index]]
+    if simplices.apex is not None:
+        corners = jnp.concatenate([simplices.apex[row][None], corners])
     return path.simplex_point(key_barycentric, corners)
-
-
-def sample_face_point(key: KeyArray, scene: Scene, face: Index, path: Path[Any]) -> Vector:
-    """Sample a point on a face, via its fan decomposition."""
-    key_fan, key_barycentric = jax.random.split(key)
-    index = jax.random.choice(key_fan, scene.face_fan_weight.shape[1], p=scene.face_fan_weight[face])
-    return path.simplex_point(key_barycentric, scene.vertices[scene.face_fan_vertices[face, index]])
 
 
 class Sources(eqx.Module):
@@ -70,13 +67,13 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any]) -> tu
     # `searchsorted` is int32 even under x64, and the march compares this
     # against the scene's own index arrays, so pin it to their width.
     source = jnp.minimum(jnp.searchsorted(sources.cumulative, draw), sources.cumulative.shape[0] - 1)
-    source = source.astype(scene.neighbour.dtype)
+    source = source.astype(scene.cells.neighbour.dtype)
 
     # Traced under a static shape, so a volume-only problem never indexes into
     # the empty surface arrays.
     if sources.face_power.shape[0] == 0:
         return path.launch(
-            sample_cell_point(key_point, scene, source, path),
+            sample_point(key_point, scene.vertices, scene.cells.interior, source, path),
             path.isotropic(key_direction),
             jnp.zeros(()),
         ), source
@@ -87,14 +84,14 @@ def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any]) -> tu
 
     # The stored normal points out of face_cells[:, 0], so the EXTERIOR column
     # says which way is back into the domain.
-    cells = scene.face_cells[face]
-    inward = jnp.where(cells[0] == EXTERIOR, 1.0, -1.0) * scene.face_normal[face]
+    cells = scene.faces.cells[face]
+    inward = jnp.where(cells[0] == EXTERIOR, 1.0, -1.0) * scene.faces.normal[face]
 
     return path.launch(
         jnp.where(
             from_surface,
-            sample_face_point(key_point, scene, face, path),
-            sample_cell_point(key_point, scene, cell, path),
+            sample_point(key_point, scene.vertices, scene.faces.surface, face, path),
+            sample_point(key_point, scene.vertices, scene.cells.interior, cell, path),
         ),
         jnp.where(
             from_surface,

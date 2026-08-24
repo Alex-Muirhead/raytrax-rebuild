@@ -27,6 +27,13 @@ manageable:
   lookup escapes rather than walking somewhere wrong.
 - **The energy scatter must stay outside the `vmap`.** Inside it, XLA
   materialises a per-ray copy of the accumulator and memory explodes.
+- **`cells.normal` is signed outward per cell; `faces.normal` is the raw one.**
+  The device tables are grouped by leading index, so the two never collide, and
+  `Scene.__check_init__` is what checks they agree on `ndim`: the shape hook
+  only sees inside one table at a time, and only under test.
+- **`MeshTopology` names a field for what one row holds.** `cell_faces` and
+  `face_cells` are duals; `cell_face_valid` and `face_num_verts` are derived
+  from the -1 padding rather than stored.
 - **Faces must be planar.** `scene.validate` rejects warped quads; they break
   the half-space cell model and rays leak.
 - **A revolved mesh is stored `(x, r)` in columns 0 and 1, with `r >= 0`.**

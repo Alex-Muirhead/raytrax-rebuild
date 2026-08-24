@@ -49,7 +49,9 @@ class TestSampling:
         _, _, scene = make(blocks, vertices)
         keys = jax.random.split(jax.random.key(0), 2000)
         cells = jax.random.randint(jax.random.key(1), (2000,), 0, scene.num_cells)
-        points = jax.vmap(sources.sample_cell_point, in_axes=(0, None, 0, None))(keys, scene, cells, LinearPath())
+        points = jax.vmap(sources.sample_point, in_axes=(0, None, None, 0, None))(
+            keys, scene.vertices, scene.cells.interior, cells, LinearPath()
+        )
         assert bool(jnp.all(contains(scene, cells, points)))
 
     @pytest.mark.parametrize("dim,expected", [(3, 1.0), (2, np.pi / 4)])
@@ -267,7 +269,9 @@ class TestAxisymmetric:
 
         keys = jax.random.split(jax.random.key(0), 200_000)
         cells = jnp.zeros(200_000, dtype=int)
-        points = jax.vmap(sources.sample_cell_point, in_axes=(0, None, 0, None))(keys, scene, cells, AxisymmetricPath())
+        points = jax.vmap(sources.sample_point, in_axes=(0, None, None, 0, None))(
+            keys, scene.vertices, scene.cells.interior, cells, AxisymmetricPath()
+        )
         assert float(points[:, 1].mean()) == approx(14 / 9, abs=3e-3)
         assert bool(jnp.all(contains(scene, cells, points)))
 

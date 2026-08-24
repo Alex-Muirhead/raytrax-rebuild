@@ -8,6 +8,46 @@ the argument behind them, which the conventions deliberately keep out of
 docstrings, comments and commit messages. Keep entries to the four lines below;
 anything longer belongs in `docs/`.
 
+## The device tables are grouped by leading index, not flat
+
+`Group the Scene and MeshTopology tables by index space`, 2026-08-24
+
+**Why:** `Scene` was flat, but six of its fields already carried a `face_`
+prefix, so the namespace existed without the type system enforcing it. The
+prefix was the only thing separating the sign-flipped per-cell `normal` from the
+raw per-face one. `MeshGeometry` was nested all along and reads fluently.
+**Instead of:** Flat fields on the argument that the device side is a buffer
+table, not a model. That argument holds for behaviour, and `Scene` still has no
+methods; it never argued for flat names.
+**Cost:** Three `__init__` calls instead of one, so the jaxtyping hook no longer
+sees across the tables. `Scene.__check_init__` takes that check over and is
+strictly better: it runs at construction in production too, not only under the
+test hook, and equinox skips it when unflattening, so jit pays nothing.
+
+## A simplex decomposition is one type, used for cells and for faces
+
+`Group the Scene and MeshTopology tables by index space`, 2026-08-24
+
+**Why:** `sample_cell_point` and `sample_face_point` were the same function over
+the same structure, which nothing named. `apex` is `None` for a face, so the
+seed concatenation is a Python branch on the treedef and is absent from the face
+jaxpr rather than compiled as a `cond`.
+**Instead of:** Two functions, or one padded to a shared simplex count. The
+latter would have destroyed the per-shape specialisation that keeps them
+separate traces.
+
+## cell_face_valid and face_num_verts are derived, not stored
+
+`Group the Scene and MeshTopology tables by index space`, 2026-08-24
+
+**Why:** `cell_face` is -1 padded, so the mask is exactly `cell_face >= 0`, and
+`face_vertices` likewise gives the count. Storing them was two arrays that had
+to be kept consistent with their source for no gain.
+**Instead of:** Keeping them as fields. `cell_face_signs` stays stored, since
+recovering it from `face_cells` costs a gather rather than a comparison.
+**Cost:** Each access rebuilds the array, so `geometry` hoists them out of its
+slot loops.
+
 ## The axisymmetric crossing follows docs/hyperbolic.typ, in its own notation
 
 `Add AxisymmetricPath`, 2026-08-24

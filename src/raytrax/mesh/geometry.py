@@ -58,8 +58,9 @@ def face_geometry(topology: MeshTopology, vertices: np.ndarray) -> FaceGeometry:
     fan_vertices = np.zeros((num_faces, max_fan, dim), dtype=np.int64)
     fan_weight = np.zeros((num_faces, max_fan))
 
-    for num_verts in np.unique(topology.face_num_verts):
-        rows = np.flatnonzero(topology.face_num_verts == num_verts)
+    face_num_verts = topology.face_num_verts
+    for num_verts in np.unique(face_num_verts):
+        rows = np.flatnonzero(face_num_verts == num_verts)
         points = vertices[topology.face_vertices[rows, :num_verts]]
 
         if num_verts == 2:
@@ -114,6 +115,7 @@ def cell_geometry(topology: MeshTopology, vertices: np.ndarray) -> CellGeometry:
     oriented, which `scene.validate` checks.
     """
     dim = topology.dim
+    valid = topology.cell_face_valid
     face_verts = cell_face_vertices(topology)
     max_face_verts = face_verts.shape[-1]
     fans_per_face = 1 if dim == 2 else max_face_verts - 2
@@ -127,7 +129,7 @@ def cell_geometry(topology: MeshTopology, vertices: np.ndarray) -> CellGeometry:
     for slot in range(topology.max_faces):
         for corner in range(fans_per_face):
             picks = face_verts[:, slot, [0, 1] if dim == 2 else [0, corner + 1, corner + 2]]
-            usable = topology.cell_face_valid[:, slot] & np.all(picks >= 0, axis=-1)
+            usable = valid[:, slot] & np.all(picks >= 0, axis=-1)
             simplices.append(np.where(usable[:, None], picks, -1))
 
     simplex_vertices = np.stack(simplices, axis=1)

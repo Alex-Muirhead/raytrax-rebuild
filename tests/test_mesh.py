@@ -50,12 +50,12 @@ class TestTopology:
     def test_neighbours_are_reciprocal(self, mesh):
         """Walking out of a cell and back in must return where it started."""
         mesh_topology, _, _ = mesh
-        cell, slot = np.nonzero(mesh_topology.cell_neighbour >= 0)
-        neighbour = mesh_topology.cell_neighbour[cell, slot]
-        shared = mesh_topology.cell_face[cell, slot]
+        cell, slot = np.nonzero(mesh_topology.cell_neighbours >= 0)
+        neighbour = mesh_topology.cell_neighbours[cell, slot]
+        shared = mesh_topology.cell_faces[cell, slot]
 
-        back = np.argmax(mesh_topology.cell_face[neighbour] == shared[:, None], axis=1)
-        assert np.all(mesh_topology.cell_neighbour[neighbour, back] == cell)
+        back = np.argmax(mesh_topology.cell_faces[neighbour] == shared[:, None], axis=1)
+        assert np.all(mesh_topology.cell_neighbours[neighbour, back] == cell)
 
     def test_shared_faces_have_opposite_signs(self, mesh):
         """One cell sees the stored normal as outward, the other as inward."""
@@ -64,16 +64,23 @@ class TestTopology:
         left, right = mesh_topology.face_cells[interior].T
 
         def sign_of(cells, faces):
-            slot = np.argmax(mesh_topology.cell_face[cells] == faces[:, None], axis=1)
-            return mesh_topology.cell_face_sign[cells, slot]
+            slot = np.argmax(mesh_topology.cell_faces[cells] == faces[:, None], axis=1)
+            return mesh_topology.cell_face_signs[cells, slot]
 
         assert np.all(sign_of(left, interior) == -sign_of(right, interior))
 
     def test_padded_slots_are_inert(self, mesh):
         mesh_topology, _, scene = mesh
         padded = ~mesh_topology.cell_face_valid
-        assert np.all(np.asarray(scene.normal)[padded] == 0)
-        assert np.all(np.asarray(scene.neighbour)[padded] == topology.EXTERIOR)
+        assert np.all(np.asarray(scene.cells.normal)[padded] == 0)
+        assert np.all(np.asarray(scene.cells.neighbour)[padded] == topology.EXTERIOR)
+
+    def test_tables_must_agree_on_dimension(self, mesh):
+        """The cell, face and vertex tables are built separately, so nothing but
+        `__check_init__` stops a 2D table being paired with a 3D one."""
+        _, _, scene = mesh
+        with pytest.raises(ValueError, match="disagree"):
+            scene_module.Scene(scene.cells, scene.faces, scene.vertices[:, :-1])
 
 
 class TestGeometry:
@@ -98,8 +105,8 @@ class TestGeometry:
     def test_divergence_theorem_matches_volume(self, mesh):
         """Independent check: sum(outward offset * area) / dim is the volume."""
         mesh_topology, mesh_geometry, _ = mesh
-        slot = np.maximum(mesh_topology.cell_face, 0)
-        signed = mesh_topology.cell_face_sign * mesh_geometry.faces.offset[slot] * mesh_geometry.faces.area[slot]
+        slot = np.maximum(mesh_topology.cell_faces, 0)
+        signed = mesh_topology.cell_face_signs * mesh_geometry.faces.offset[slot] * mesh_geometry.faces.area[slot]
         assert signed.sum(axis=1) / mesh_topology.dim == approx(mesh_geometry.cells.volume)
 
 

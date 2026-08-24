@@ -100,7 +100,7 @@ def step(
     energy: Scalar,
 ) -> StepResult:
     """Cross one cell, depositing continuously along the way."""
-    normal, offset = scene.normal[cell], scene.offset[cell]
+    normal, offset = scene.cells.normal[cell], scene.cells.offset[cell]
     slot, parameter = path.crossing(normal, offset, state)
     # A corner or grazing hit can give a small negative parameter.
     parameter = jnp.maximum(parameter, 0.0)
@@ -113,11 +113,11 @@ def step(
     energy = energy * transmission
     state = moved
 
-    face = scene.face[cell, slot]
-    neighbour = scene.neighbour[cell, slot]
+    face = scene.cells.face[cell, slot]
+    neighbour = scene.cells.neighbour[cell, slot]
     at_boundary = neighbour < 0
 
-    group = jnp.where(at_boundary, scene.face_group[face], 0)
+    group = jnp.where(at_boundary, scene.faces.group[face], 0)
     hit_state, absorbed, terminated = interaction.apply(path, interactions, group, key, state, normal[slot])
 
     state = _keep_tree(at_boundary, hit_state, state)

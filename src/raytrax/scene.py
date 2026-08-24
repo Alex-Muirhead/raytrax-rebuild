@@ -12,14 +12,25 @@ from raytrax.mesh.topology import EXTERIOR, MeshTopology
 NULL_HALFSPACE = 0.0
 
 
-class Scene(eqx.Module):
-    """Flat device-side arrays: exactly what the ray march touches, nothing else.
+class Simplices(eqx.Module):
+    """A decomposition into simplices with weights summing to 1, for sampling.
 
-    Cells are padded to a fixed number of face slots, so mixed element types
-    still fit rectangular arrays.
+    `apex` is the extra corner every simplex spans from, and is absent where the
+    stored vertices already span them.
     """
 
-    dim: int = eqx.field(static=True)
+    vertices: Int[Array, "n nsimplex ndim"]
+    weight: Float[Array, "n nsimplex"]
+    apex: Float[Array, "n ndim"] | None = None
+
+    @property
+    def width(self) -> int:
+        """Spatial dimension. A simplex spans it with `ndim` vertices plus the apex."""
+        return self.vertices.shape[-1]
+
+
+class CellTable(eqx.Module):
+    """Per-cell arrays, padded to a fixed number of face slots."""
 
     # Half-space form of every cell, already signed outward.
     normal: Float[Array, "ncell nslot ndim"]
@@ -27,60 +38,87 @@ class Scene(eqx.Module):
     neighbour: Int[Array, "ncell nslot"]
     face: Int[Array, "ncell nslot"]
 
-    volume: Float[Array, " ncell"]
-    centroid: Float[Array, "ncell ndim"]
-    seed: Float[Array, "ncell ndim"]
-    simplex_vertices: Int[Array, "ncell nsimplex ndim"]
-    simplex_weight: Float[Array, "ncell nsimplex"]
+    interior: Simplices
 
-    face_area: Float[Array, " nface"]
-    face_normal: Float[Array, "nface ndim"]
-    face_fan_vertices: Int[Array, "nface nfan ndim"]
-    face_fan_weight: Float[Array, "nface nfan"]
-    face_cells: Int[Array, "nface 2"]
-    face_group: Int[Array, " nface"]
 
+class FaceTable(eqx.Module):
+    """Per-face arrays. `normal` is outward from column 0 of `cells`."""
+
+    normal: Float[Array, "nface ndim"]
+    cells: Int[Array, "nface 2"]
+    group: Int[Array, " nface"]
+
+    surface: Simplices
+
+
+class Scene(eqx.Module):
+    """Device-side arrays: exactly what the ray march touches, nothing else.
+
+    Grouped by leading index, so `cells.normal` and `faces.normal` cannot be
+    confused. They are not the mesh: slots are padded and the signs are baked in.
+    """
+
+    cells: CellTable
+    faces: FaceTable
     vertices: Float[Array, "nvert ndim"]
+
+    def __check_init__(self):
+        # The shape hook checks ndim within each table but never between them,
+        # and it only runs under test; this runs always.
+        ndim = self.vertices.shape[-1]
+        widths = {
+            "cells.normal": self.cells.normal.shape[-1],
+            "cells.interior": self.cells.interior.width,
+            "faces.normal": self.faces.normal.shape[-1],
+            "faces.surface": self.faces.surface.width,
+        }
+        wrong = {name: width for name, width in widths.items() if width != ndim}
+        if wrong:
+            raise ValueError(f"Vertices are {ndim}D, but {wrong} disagree")
 
     @property
     def num_cells(self) -> int:
-        return self.volume.shape[0]
+        return self.cells.neighbour.shape[0]
 
     @property
     def num_faces(self) -> int:
-        return self.face_area.shape[0]
+        return self.faces.group.shape[0]
 
 
 def build(topology: MeshTopology, geometry: MeshGeometry, groups: BoundaryGroups | None = None) -> Scene:
-    slot = np.maximum(topology.cell_face, 0)
+    slot = np.maximum(topology.cell_faces, 0)
     valid = topology.cell_face_valid
-    sign = topology.cell_face_sign
+    sign = topology.cell_face_signs
 
     normal = np.where(valid[..., None], geometry.faces.normal[slot] * sign[..., None], NULL_HALFSPACE)
     offset = np.where(valid, geometry.faces.offset[slot] * sign, NULL_HALFSPACE)
     # An unreachable slot still escapes rather than walking somewhere wrong.
-    neighbour = np.where(valid, topology.cell_neighbour, EXTERIOR)
-    face = np.where(valid, topology.cell_face, 0)
+    neighbour = np.where(valid, topology.cell_neighbours, EXTERIOR)
+    face = np.where(valid, topology.cell_faces, 0)
 
     face_group = groups.face_group if groups is not None else np.full(topology.num_faces, DEFAULT_GROUP)
 
     return Scene(
-        dim=topology.dim,
-        normal=jnp.asarray(normal),
-        offset=jnp.asarray(offset),
-        neighbour=jnp.asarray(neighbour),
-        face=jnp.asarray(face),
-        volume=jnp.asarray(geometry.cells.volume),
-        centroid=jnp.asarray(geometry.cells.centroid),
-        seed=jnp.asarray(geometry.cells.seed),
-        simplex_vertices=jnp.asarray(np.maximum(geometry.cells.simplex_vertices, 0)),
-        simplex_weight=jnp.asarray(geometry.cells.simplex_weight),
-        face_area=jnp.asarray(geometry.faces.area),
-        face_normal=jnp.asarray(geometry.faces.normal),
-        face_fan_vertices=jnp.asarray(geometry.faces.fan_vertices),
-        face_fan_weight=jnp.asarray(geometry.faces.fan_weight),
-        face_cells=jnp.asarray(topology.face_cells),
-        face_group=jnp.asarray(face_group),
+        cells=CellTable(
+            normal=jnp.asarray(normal),
+            offset=jnp.asarray(offset),
+            neighbour=jnp.asarray(neighbour),
+            face=jnp.asarray(face),
+            interior=Simplices(
+                vertices=jnp.asarray(np.maximum(geometry.cells.simplex_vertices, 0)),
+                weight=jnp.asarray(geometry.cells.simplex_weight),
+                apex=jnp.asarray(geometry.cells.seed),
+            ),
+        ),
+        faces=FaceTable(
+            normal=jnp.asarray(geometry.faces.normal),
+            cells=jnp.asarray(topology.face_cells),
+            group=jnp.asarray(face_group),
+            surface=Simplices(
+                vertices=jnp.asarray(geometry.faces.fan_vertices),
+                weight=jnp.asarray(geometry.faces.fan_weight),
+            ),
+        ),
         vertices=jnp.asarray(geometry.vertices),
     )
 
@@ -98,9 +136,9 @@ def validate(topology: MeshTopology, geometry: MeshGeometry, *, flatness: float 
         raise ValueError(f"{np.sum(geometry.faces.flatness > flatness)} faces are warped (worst {worst:.2e})")
 
     # Every cell must lie strictly inside its own half-spaces, or rays leak.
-    slot = np.maximum(topology.cell_face, 0)
-    normal = geometry.faces.normal[slot] * topology.cell_face_sign[..., None]
-    offset = geometry.faces.offset[slot] * topology.cell_face_sign
+    slot = np.maximum(topology.cell_faces, 0)
+    normal = geometry.faces.normal[slot] * topology.cell_face_signs[..., None]
+    offset = geometry.faces.offset[slot] * topology.cell_face_signs
     distance = np.einsum("cfd,cd->cf", normal, geometry.cells.centroid) - offset
     outside = topology.cell_face_valid & (distance >= 0)
     if np.any(outside):
@@ -115,5 +153,5 @@ def contains(
     A point left on a shared face by a crossing needs a tolerance to count as
     inside.
     """
-    distance = jnp.einsum("...sd,...d->...s", scene.normal[cell], point) - scene.offset[cell]
+    distance = jnp.einsum("...sd,...d->...s", scene.cells.normal[cell], point) - scene.cells.offset[cell]
     return jnp.all(distance <= tolerance, axis=-1)

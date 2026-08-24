@@ -24,17 +24,15 @@ class MeshTopology:
     block_elements: tuple[ElementType, ...]
     cell_block: Int[np.ndarray, " ncell"]  # which input block a cell came from
     cell_vertices: Int[np.ndarray, "ncell max_cell_verts"]  # -1 padded
-    cell_face: Int[np.ndarray, "ncell max_faces"]  # global face id, -1 padded
-    cell_face_sign: Int[np.ndarray, "ncell max_faces"]  # +1 outward, -1 inward, 0 padded
-    cell_face_valid: Bool[np.ndarray, "ncell max_faces"]
-    cell_neighbour: Int[np.ndarray, "ncell max_faces"]  # cell id or negative sentinel
+    cell_faces: Int[np.ndarray, "ncell max_faces"]  # global face id, -1 padded
+    cell_face_signs: Int[np.ndarray, "ncell max_faces"]  # +1 outward, -1 inward, 0 padded
+    cell_neighbours: Int[np.ndarray, "ncell max_faces"]  # cell id or negative sentinel
     face_vertices: Int[np.ndarray, "nface max_face_verts"]  # canonically wound, -1 padded
-    face_num_verts: Int[np.ndarray, " nface"]
     face_cells: Int[np.ndarray, "nface 2"]  # column 0 sees the stored normal as outward
 
     @property
     def num_cells(self) -> int:
-        return self.cell_face.shape[0]
+        return self.cell_faces.shape[0]
 
     @property
     def num_faces(self) -> int:
@@ -42,7 +40,17 @@ class MeshTopology:
 
     @property
     def max_faces(self) -> int:
-        return self.cell_face.shape[1]
+        return self.cell_faces.shape[1]
+
+    @property
+    def cell_face_valid(self) -> Bool[np.ndarray, "ncell max_faces"]:
+        """Mask of slots a cell actually uses. Derived, so it cannot drift."""
+        return self.cell_faces >= 0
+
+    @property
+    def face_num_verts(self) -> Int[np.ndarray, " nface"]:
+        """Vertices per face. Derived, so it cannot drift."""
+        return np.sum(self.face_vertices >= 0, axis=1)
 
     @property
     def is_boundary(self) -> Bool[np.ndarray, " nface"]:
@@ -85,56 +93,51 @@ def build(blocks: Sequence[Block]) -> MeshTopology:
             slot_num_verts[lo:hi, slot] = len(local)
 
     cell_face_valid = slot_num_verts > 0
-    cell_face = np.full((num_cells, max_faces), -1, dtype=np.int64)
+    cell_faces = np.full((num_cells, max_faces), -1, dtype=np.int64)
     reversed_bit = np.zeros((num_cells, max_faces), dtype=np.int64)
 
     # Deduplicate per vertex count, so the keys stay rectangular across a mesh
     # mixing tets, pyramids, wedges and hexes.
     face_key_groups: list[np.ndarray] = []
-    face_count_groups: list[np.ndarray] = []
     for num_verts in np.unique(slot_num_verts[cell_face_valid]):
         selected = slot_num_verts == num_verts
         keys, bits = canonical_cycle(slot_verts[selected][:, :num_verts])
         unique_keys, inverse = lex_unique(keys, return_inverse=True)
 
-        cell_face[selected] = inverse + sum(len(group) for group in face_key_groups)
+        cell_faces[selected] = inverse + sum(len(group) for group in face_key_groups)
         reversed_bit[selected] = bits
 
         padded = np.full((len(unique_keys), max_face_verts), -1, dtype=np.int64)
         padded[:, :num_verts] = unique_keys
         face_key_groups.append(padded)
-        face_count_groups.append(np.full(len(unique_keys), num_verts, dtype=np.int64))
 
     face_vertices = np.concatenate(face_key_groups)
-    face_num_verts = np.concatenate(face_count_groups)
     num_faces = len(face_vertices)
 
     # A face's two cells wind it oppositely, so the reversed bit picks the
     # column, and the stored normal is outward from whichever lands in column 0.
-    cell_ids = np.broadcast_to(np.arange(num_cells)[:, None], cell_face.shape)
+    cell_ids = np.broadcast_to(np.arange(num_cells)[:, None], cell_faces.shape)
     face_cells = np.full((num_faces, 2), EXTERIOR, dtype=np.int64)
-    face_cells[cell_face[cell_face_valid], reversed_bit[cell_face_valid]] = cell_ids[cell_face_valid]
+    face_cells[cell_faces[cell_face_valid], reversed_bit[cell_face_valid]] = cell_ids[cell_face_valid]
     if not np.array_equal(
-        face_cells[cell_face[cell_face_valid], reversed_bit[cell_face_valid]], cell_ids[cell_face_valid]
+        face_cells[cell_faces[cell_face_valid], reversed_bit[cell_face_valid]], cell_ids[cell_face_valid]
     ):
         raise ValueError("Invalid mesh: a face is shared by more than two cells, or two cells wind it identically")
 
-    cell_neighbour = np.full((num_cells, max_faces), EXTERIOR, dtype=np.int64)
-    cell_neighbour[cell_face_valid] = face_cells[cell_face[cell_face_valid], 1 - reversed_bit[cell_face_valid]]
+    cell_neighbours = np.full((num_cells, max_faces), EXTERIOR, dtype=np.int64)
+    cell_neighbours[cell_face_valid] = face_cells[cell_faces[cell_face_valid], 1 - reversed_bit[cell_face_valid]]
 
-    cell_face_sign = np.where(cell_face_valid, np.where(reversed_bit == 0, 1, -1), 0)
+    cell_face_signs = np.where(cell_face_valid, np.where(reversed_bit == 0, 1, -1), 0)
 
     return MeshTopology(
         dim=dim,
         block_elements=elements,
         cell_block=cell_block,
         cell_vertices=cell_vertices,
-        cell_face=cell_face,
-        cell_face_sign=cell_face_sign,
-        cell_face_valid=cell_face_valid,
-        cell_neighbour=cell_neighbour,
+        cell_faces=cell_faces,
+        cell_face_signs=cell_face_signs,
+        cell_neighbours=cell_neighbours,
         face_vertices=face_vertices,
-        face_num_verts=face_num_verts,
         face_cells=face_cells,
     )
 
