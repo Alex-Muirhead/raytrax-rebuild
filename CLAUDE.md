@@ -46,7 +46,10 @@ manageable:
 
 - Package manager **uv** - `uv run pytest`, `uv run python ...`
 - Format and organise imports with **ruff**; type-check with **pyrefly**
-- Version control is **jj**, not git (`jj st`, `jj diff`, `jj describe`)
+- Version control is **jj**, not git (`jj st`, `jj diff`, `jj describe`). The
+  working copy is already a commit, so check `jj st` before the first edit of a
+  new feature: reuse the current change if it is empty, otherwise `jj new`
+  first. Editing first folds the feature into the previous change.
 - Strict ASCII in every file, prose included. No em-dashes, no Greek, no
   symbols. Maths that needs them goes in a Typst file under `docs/`.
 - Docstrings say *what*, in one line. Add a caveat only where a caller would get
