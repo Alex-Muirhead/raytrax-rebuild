@@ -584,6 +584,72 @@ choice of sub-simplex, leaving the density within one, which is a mixture: choos
 corner $i$ with probability $r_i \/ sum_j r_j$, then draw
 $va(lambda) tilde "Dirichlet"(va(alpha))$ with $alpha_i = 2$ and the rest 1.
 
+= What the code calls these <code-map>
+
+`AxisymmetricPath` follows this document, but its identifiers spell the symbols
+out in words instead of carrying the letters across. Both sides of the map are
+provisional: $va(G)_i$ and $W_i$ are this document's own invention and are
+standard in neither hyperbolic geometry nor axisymmetric transport, and the
+names read no better. What follows is the correspondence as it stands.
+
+== `_frame`
+
+Returns the two asymptote directions and their coefficients, for
+$va(p)(v) = va(p)_0 + (v-1)/2 (va(G)_1 - va(G)_2 \/ v)$ with
+$va(G)_i = g_i va(e)_i$ (#ref(<anchor>)).
+
+#table(
+  columns: 3,
+  table.header([*Name*], [*Symbol*], [*Meaning*]),
+  [`forward`], [$va(e)_1 = (d_x, sqrt(u))$], [unit asymptote direction the ray recedes along as $v -> oo$],
+  [`backward`], [$va(e)_2 = (-d_x, sqrt(u))$], [the other unit asymptote, approached as $v -> 0$],
+  [`first`], [$g_1$], [coefficient on $va(e)_1$],
+  [`second`], [$g_2$], [coefficient on $va(e)_2$],
+  [`reduced`], [$u = 1 - d_x^2$], [squared speed off the axial direction],
+  [`rate`], [$sqrt(u)$], [the asymptotes' radial rate $dot(r)$],
+  [`scale`], [$g_1 g_2 = (L\/u)^2$], [the coefficient product the swirl fixes],
+  [`near`, `far`], [--], [conditioning, not geometry],
+)
+
+`near` is whichever of $g_1$, $g_2$ is a sum of like signs, and `far` is the
+other recovered from their product (#ref(<swirl>)). The branch on the sign of
+$dot(r)$ puts the pair back in order, so `first` is always $g_1$.
+
+== `crossing`
+
+Solves $W_1 delta^2 + l delta + 2 g_0 = 0$ for the step $delta = v - 1$, and
+returns the smallest outgoing root. Here $l = 2 g_0 + W_1 - W_2$; the letters
+$a$, $b$, $c$ are already spoken for above.
+
+#table(
+  columns: 3,
+  table.header([*Name*], [*Symbol*], [*Meaning*]),
+  [`along`], [$W_1 = va(n) dot va(G)_1$], [face normal against the outgoing asymptote],
+  [`against`], [$W_2 = va(n) dot va(G)_2$], [face normal against the incoming asymptote],
+  [`distance`], [$g_0 = va(n) dot va(p)_0 - c$], [signed distance from the ray's own position to the face plane],
+  [`linear`], [$l = 2 g_0 + W_1 - W_2$], [the coefficient of $delta$],
+  [`discriminant`], [$l^2 - 8 g_0 W_1$], [negative where the face misses the branch],
+  [`pair`], [$q = -(l + "sgn"(l) sqrt(l^2 - 8 g_0 W_1))\/2$], [the sign-safe numerator of the stable quadratic formula, not a geometric quantity],
+  [`step`], [$delta$], [both roots, as $q\/W_1$ and $2 g_0\/q$],
+  [`outgoing`], [$v^2 W_1 > W_2$], [the test $dv(g, v) > 0$ of #ref(<outgoing>)],
+  [`best`], [$delta$], [smallest surviving root per face],
+)
+
+The returned parameter is $delta$, a step in exponential angle. It is a distance
+only in the straight-ray mode, where the same interface returns one.
+
+== `advance`
+
+#table(
+  columns: 3,
+  table.header([*Name*], [*Symbol*], [*Meaning*]),
+  [`angle`], [$v = e^theta$], [exponential angle at the new point],
+  [`moved`], [$va(p)(v) - va(p)_0$], [meridional displacement],
+  [`flown`], [$Delta t$], [the 3D arclength of #ref(<arclength>)],
+  [`rate`], [$sqrt(u)$], [as in `_frame`, read back off `forward`],
+  [`radial`], [$dot(r) = sqrt(u) (g_1 - g_2\/v^2)\/(g_1 + g_2\/v^2)$], [the new radial rate, $dv(r, v)$ over $dv(t, v)$],
+)
+
 = Results
 
 Measured against a longdouble reference, bisecting $max_i g_i (t)$ on the
