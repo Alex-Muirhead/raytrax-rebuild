@@ -1,5 +1,5 @@
 import abc
-from typing import ClassVar, override
+from typing import override
 
 import equinox as eqx
 import jax
@@ -13,6 +13,9 @@ from raytrax.shapes import Index, KeyArray, Normals, Offsets, Scalar, Vector
 
 # Meridional column order for a revolved mesh.
 AXIAL, RADIAL = 0, 1
+
+# Directions are always drawn in 3D, whatever the mesh dimension.
+SPATIAL_DIM = 3
 
 
 class RayState(eqx.Module):
@@ -46,38 +49,44 @@ class Path[S: RayState](eqx.Module):
     mode picks up whatever it conserves.
     """
 
-    spatial_dim: ClassVar[int] = 3
-
-    # Not classmethods: a mode may reduce the draw against a static field.
-    def isotropic(self, key: KeyArray) -> Float[Array, " 3"]:
+    # Classmethods: a mode holds no state, and anything that varies between
+    # modes is class data. Dispatch is still on the instance's type.
+    @classmethod
+    def isotropic(cls, key: KeyArray) -> Float[Array, " 3"]:
         """A 3D direction uniform on the sphere."""
-        return sphere(key, self.spatial_dim)
+        return sphere(key, SPATIAL_DIM)
 
-    def lambertian(self, key: KeyArray, normal: Vector) -> Float[Array, " 3"]:
+    @classmethod
+    def lambertian(cls, key: KeyArray, normal: Vector) -> Float[Array, " 3"]:
         """A 3D cosine-weighted direction about an in-plane normal."""
-        return cosine_hemisphere(key, jnp.pad(normal, (0, self.spatial_dim - normal.shape[-1])))
+        return cosine_hemisphere(key, jnp.pad(normal, (0, SPATIAL_DIM - normal.shape[-1])))
 
-    def simplex_point(self, key: KeyArray, corners: Float[Array, "ncorner ndim"]) -> Vector:
+    @classmethod
+    def simplex_point(cls, key: KeyArray, corners: Float[Array, "ncorner ndim"]) -> Vector:
         """A point uniform over the simplex spanned by `corners`."""
         return simplex(key, corners.shape[0] - 1) @ corners
 
+    @classmethod
     @abc.abstractmethod
-    def launch(self, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> S:
+    def launch(cls, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> S:
         """Reduce a 3D direction into a ray state at `position`."""
 
-    def reflect(self, state: S, normal: Vector) -> S:
+    @classmethod
+    def reflect(cls, state: S, normal: Vector) -> S:
         """Mirror the tangent about an outward unit normal."""
         # A wall leaves the radius alone and preserves `|tangent|`, so both the
         # speed and the swirl survive untouched; only the tangent moves.
         tangent = state.tangent - 2 * (state.tangent @ normal) * normal
         return eqx.tree_at(lambda leaf: leaf.tangent, state, tangent)
 
+    @classmethod
     @abc.abstractmethod
-    def crossing(self, normal: Normals, offset: Offsets, state: S) -> tuple[Index, Scalar]:
+    def crossing(cls, normal: Normals, offset: Offsets, state: S) -> tuple[Index, Scalar]:
         """The slot the ray leaves through, and the parameter at which it does."""
 
+    @classmethod
     @abc.abstractmethod
-    def advance(self, state: S, parameter: Scalar) -> S:
+    def advance(cls, state: S, parameter: Scalar) -> S:
         """Step the ray forward by `parameter`, accumulating true 3D length."""
 
 
@@ -87,13 +96,15 @@ class LinearPath(Path[LinearState]):
     The crossing parameter is already the 3D distance flown.
     """
 
+    @classmethod
     @override
-    def launch(self, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> LinearState:
+    def launch(cls, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> LinearState:
         tangent = direction[: position.shape[-1]]
         return LinearState(position, tangent, travel, jnp.linalg.vector_norm(tangent))
 
+    @classmethod
     @override
-    def crossing(self, normal: Normals, offset: Offsets, state: LinearState) -> tuple[Index, Scalar]:
+    def crossing(cls, normal: Normals, offset: Offsets, state: LinearState) -> tuple[Index, Scalar]:
         epsilon = np.finfo(default_floating_dtype()).resolution
 
         distance = normal @ state.position - offset
@@ -107,8 +118,9 @@ class LinearPath(Path[LinearState]):
         slot = jnp.nanargmin(travel)
         return slot, travel[slot]
 
+    @classmethod
     @override
-    def advance(self, state: LinearState, parameter: Scalar) -> LinearState:
+    def advance(cls, state: LinearState, parameter: Scalar) -> LinearState:
         return LinearState(
             position=state.position + parameter * state.tangent,
             tangent=state.tangent,
@@ -124,8 +136,9 @@ class AxisymmetricPath(Path[HyperbolicState]):
     in the hyperbola's own parameter, not a distance; `advance` converts it.
     """
 
+    @classmethod
     @override
-    def simplex_point(self, key: KeyArray, corners: Float[Array, "ncorner ndim"]) -> Vector:
+    def simplex_point(cls, key: KeyArray, corners: Float[Array, "ncorner ndim"]) -> Vector:
         # A ring is not uniform in the meridional plane: the density carries a
         # factor r, making it a mixture over the corners. Drawing one dimension
         # up and folding the spare weight into corner `i` is Dirichlet with
@@ -136,15 +149,17 @@ class AxisymmetricPath(Path[HyperbolicState]):
         weights = simplex(key_weights, corners.shape[0])
         return weights[1:].at[corner].add(weights[0]) @ corners
 
+    @classmethod
     @override
-    def launch(self, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> HyperbolicState:
+    def launch(cls, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> HyperbolicState:
         # The swirl is the azimuthal component times the radius. Reading it off
         # the 3D draw keeps full precision for a ray that nearly meets the axis,
         # where recovering it from `1 - |tangent|^2` would cancel away.
         swirl = position[RADIAL] * jnp.abs(direction[2])
         return HyperbolicState(position, direction[:2], travel, swirl)
 
-    def _frame(self, state: HyperbolicState) -> tuple[Vector, Vector, Scalar, Scalar]:
+    @classmethod
+    def _frame(cls, state: HyperbolicState) -> tuple[Vector, Vector, Scalar, Scalar]:
         """Asymptote directions and their coefficients, anchored at the ray.
 
         The parametrisation is fixed so the ray sits at `w = 1`; a frame pinned
@@ -164,9 +179,10 @@ class AxisymmetricPath(Path[HyperbolicState]):
         first, second = jnp.where(radial >= 0, near, far), jnp.where(radial >= 0, far, near)
         return jnp.stack([axial, rate]), jnp.stack([-axial, rate]), first, second
 
+    @classmethod
     @override
-    def crossing(self, normal: Normals, offset: Offsets, state: HyperbolicState) -> tuple[Index, Scalar]:
-        forward, backward, first, second = self._frame(state)
+    def crossing(cls, normal: Normals, offset: Offsets, state: HyperbolicState) -> tuple[Index, Scalar]:
+        forward, backward, first, second = cls._frame(state)
 
         along = first * (normal @ forward)
         against = second * (normal @ backward)
@@ -188,9 +204,10 @@ class AxisymmetricPath(Path[HyperbolicState]):
         slot = jnp.nanargmin(best)
         return slot, best[slot]
 
+    @classmethod
     @override
-    def advance(self, state: HyperbolicState, parameter: Scalar) -> HyperbolicState:
-        forward, backward, first, second = self._frame(state)
+    def advance(cls, state: HyperbolicState, parameter: Scalar) -> HyperbolicState:
+        forward, backward, first, second = cls._frame(state)
         angle = 1 + parameter
 
         moved = parameter / 2 * (first * forward - second * backward / angle)

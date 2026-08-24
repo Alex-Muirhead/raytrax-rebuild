@@ -8,6 +8,20 @@ the argument behind them, which the conventions deliberately keep out of
 docstrings, comments and commit messages. Keep entries to the four lines below;
 anything longer belongs in `docs/`.
 
+## Path methods are classmethods, and a mode holds no state
+
+`Make the Path interface stateless`, 2026-08-24
+
+**Why:** No mode has instance state, so `self` advertised a statefulness that
+does not exist. `spatial_dim` was the last thing reached through the instance
+and is constant 3, since directions are always drawn in 3D whatever the mesh.
+Anything that could vary between modes, such as the axis of revolution, is one
+value per mode and so is class data that `cls` still reaches.
+**Instead of:** Instance methods, which is what this was until today, or
+`staticmethod`, which closes off the class-level extension point for nothing.
+**Cost:** None measured. Dispatch is resolved when the mode is traced, and the
+Path contributes no array leaves, so it is static to `filter_jit` either way.
+
 ## The device tables are grouped by leading index, not flat
 
 `Group the Scene and MeshTopology tables by index space`, 2026-08-24
@@ -140,14 +154,13 @@ arguments over several sessions. Stating the rule once was not enough; it needed
 to be checked into the repo where it is re-read.
 **Instead of:** Relying on a general instruction to be concise.
 
-## Path is genuinely abstract, and its methods are instance methods
+## Path is genuinely abstract
 
 `1ba1ab1`, 2026-08-23
 
-**Why:** A mode reduces the direction draw against its own static data, which a
-`staticmethod` could not reach. The kinematics belong on the path, not in
-`transport`.
-**Instead of:** Free functions plus a mode enum, or classmethods.
+**Why:** The kinematics belong on the path, not in `transport`, and every mode
+has to implement all of them or fail at construction.
+**Instead of:** Free functions plus a mode enum.
 
 ## The jaxtyping hook is installed in conftest, not in the package
 
