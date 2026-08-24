@@ -20,7 +20,7 @@ with app.setup:
     from raytrax.interactions import Kind
     from raytrax.io import vtk
     from raytrax.mesh import geometry
-    from raytrax.paths import AxisymmetricPath, LinearPath
+    from raytrax.paths import RADIAL, AxisymmetricPath, LinearPath
 
     MESHES = Path(__file__).parent / "meshes"
 
@@ -38,23 +38,23 @@ def _():
       has a closed form to check against.
     - **plane** - 2D, deliberately **mixed**: quads on the lower half,
       triangles on the upper, sharing an interior face.
+    - **axisymmetric** - *the very same 2D mesh*, revolved about its `y = 0`
+      edge, so it becomes the meridional half-plane `(x, r)` of the cylinder.
 
-    - **meridian** - the same solid as the cylinder, meshed as its 2D
-      meridional half-plane and read as **axisymmetric**.
-
-    A 2D mesh can be read two ways. **Planar** extrudes it infinitely out of
-    plane; only the in-plane part of a direction is stored, so `|tangent| < 1`
-    and the distance flown exceeds the in-plane chord. **Axisymmetric** revolves
-    it, and a straight 3D ray then projects to a *hyperbola* rather than a line.
-    Either way `travel` is the true 3D length, so all three domains are checked
-    against the same closed form.
+    The last two differ only in how the mesh is read. **Planar** extrudes it
+    infinitely out of plane; only the in-plane part of a direction is stored, so
+    `|tangent| < 1` and the distance flown exceeds the in-plane chord.
+    **Axisymmetric** revolves it, cells become rings, and a straight 3D ray
+    projects to a *hyperbola* rather than a line. Either way `travel` is the
+    true 3D length, so all three domains are checked against the same closed
+    form -- and the two readings of one mesh must agree.
     """)
     return
 
 
 @app.cell
 def _():
-    domain = mo.ui.dropdown(["cylinder", "plane", "meridian"], value="cylinder", label="Domain")
+    domain = mo.ui.dropdown(["cylinder", "plane", "axisymmetric"], value="cylinder", label="Domain")
     kappa = mo.ui.slider(0.1, 5.0, 0.1, value=1.0, label="Absorptivity kappa")
     num_rays = mo.ui.dropdown(["50000", "200000", "1000000"], value="200000", label="Rays")
     mirror = mo.ui.checkbox(True, label="Mirror the lateral boundary")
@@ -64,19 +64,20 @@ def _():
 
 @app.cell
 def _(domain):
-    path = MESHES / f"{domain.value}.msh"
+    # The axisymmetric domain is the plane mesh, read differently.
+    axisymmetric = domain.value == "axisymmetric"
+    path = MESHES / f"{'plane' if axisymmetric else domain.value}.msh"
     if not path.exists():
         raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
 
     mesh = vtk.read(path)
     # Revolving reweights cells as rings, which the axisymmetric path assumes.
-    axisymmetric = domain.value == "meridian"
     geom = geometry.revolve(mesh.geometry) if axisymmetric else mesh.geometry
     trace_path = AxisymmetricPath() if axisymmetric else LinearPath()
 
     scene = scene_module.build(mesh.topology, geom, mesh.groups)
     scene_module.validate(mesh.topology, geom)
-    return geom, mesh, scene, trace_path
+    return axisymmetric, geom, mesh, scene, trace_path
 
 
 @app.cell(hide_code=True)
@@ -99,11 +100,17 @@ def _(geom, mesh):
 
 
 @app.cell
-def _(geom, mesh, mirror):
+def _(axisymmetric, geom, mesh, mirror):
     # A black hot wall, a black cold wall, and a lateral surface that either
     # mirrors rays back in or lets them escape.
     lateral = Kind.SPECULAR if mirror.value else Kind.ESCAPE
-    table = interactions.build(mesh.groups, {"hot_end": Kind.ABSORB, "wall": Kind.ABSORB, "lateral": lateral})
+    # Revolved, the y = 0 edge is the axis; make it black so that anything
+    # reaching it is deposited and shows up below. Extruded it is just a side,
+    # and has to match `lateral` or the slab stops being symmetric.
+    kinds = {"hot_end": Kind.ABSORB, "wall": Kind.ABSORB, "lateral": lateral}
+    if "axis" in mesh.groups.names:
+        kinds["axis"] = Kind.ABSORB if axisymmetric else lateral
+    table = interactions.build(mesh.groups, kinds)
 
     # Cold gas; the hot end cap emits with sigma T^4 = 1 per unit area.
     hot = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("hot_end"))
@@ -140,7 +147,7 @@ def _(geom, kappa, mesh, num_rays, scene, source, table, trace_path):
 
 
 @app.cell(hide_code=True)
-def _(deposit, final, initial, mesh, source):
+def _(axisymmetric, deposit, final, initial, mesh, source):
     # A ray absorbed at a wall has already handed over its energy, so whatever a
     # dead ray still carries left the domain.
     _escaped = float(jnp.where(final.alive, 0.0, final.energy).sum())
@@ -150,10 +157,10 @@ def _(deposit, final, initial, mesh, source):
     # A ray only reaches r = 0 with no swirl at all, so anything landing on the
     # axis group is a leak through the symmetry plane.
     _axis = ""
-    if "axis" in mesh.groups.names:
+    if axisymmetric and "axis" in mesh.groups.names:
         _faces = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("axis"))
         _leak = float(np.asarray(deposit.faces)[_faces].sum()) / float(source.total)
-        _axis = f"| through the axis | {_leak:.2e} (must be zero) |\n"
+        _axis = f"| through the axis | {_leak:.2e} (must be zero) |"
 
     mo.md(f"""
     | energy | |
@@ -206,29 +213,38 @@ def _(geom, heating, kappa, mesh, mirror):
 
 
 @app.cell(hide_code=True)
-def _(heating, kappa, mesh):
+def _(axisymmetric, geom, heating, kappa, mesh):
     def _radial():
-        if mesh.topology.dim != 3:
-            return mo.md("*Radial shells apply to the 3D cylinder only.*")
+        if mesh.topology.dim != 3 and not axisymmetric:
+            return mo.md("*Radial shells need an axis: the cylinder or the axisymmetric domain.*")
 
         fig, ax = plt.subplots(figsize=(7, 4))
-        centroid = mesh.geometry.cells.centroid
+        centroid, vertices = mesh.geometry.cells.centroid, mesh.geometry.vertices
+        # Revolved, the radius is stored outright; in 3D it has to be measured.
+        if axisymmetric:
+            radius, edge = centroid[:, RADIAL], vertices[:, RADIAL]
+        else:
+            radius, edge = np.linalg.norm(centroid[:, 1:], axis=-1), np.linalg.norm(vertices[:, 1:], axis=-1)
         x = centroid[:, 0]
-        radius = np.linalg.norm(centroid[:, 1:], axis=-1)
-        lo = mesh.geometry.vertices[:, 0].min()
+        lo = vertices[:, 0].min()
 
-        x_bins = np.linspace(lo, mesh.geometry.vertices[:, 0].max(), 5)
-        r_bins = np.linspace(0.0, np.linalg.norm(mesh.geometry.vertices[:, 1:], axis=-1).max(), 31)
+        x_bins = np.linspace(lo, vertices[:, 0].max(), 5)
+        r_bins = np.linspace(0.0, edge.max(), 31 if mesh.topology.dim == 3 else 13)
         xi = np.clip(np.digitize(x, x_bins) - 1, 0, x_bins.size - 2)
         ri = np.clip(np.digitize(radius, r_bins) - 1, 0, r_bins.size - 2)
         flat = xi * (r_bins.size - 1) + ri
         shape = (x_bins.size - 1, r_bins.size - 1)
 
-        energy = np.bincount(flat, heating * mesh.geometry.cells.volume, shape[0] * shape[1]).reshape(shape)
-        volume = np.bincount(flat, mesh.geometry.cells.volume, shape[0] * shape[1]).reshape(shape)
+        # Ring volumes once revolved, so a shell average is a volume average in
+        # either mode. The innermost shell is the one to watch: it is where rays
+        # pass closest to the axis, and where the hyperbolic crossing is most
+        # delicate.
+        energy = np.bincount(flat, heating * geom.cells.volume, shape[0] * shape[1]).reshape(shape)
+        volume = np.bincount(flat, geom.cells.volume, shape[0] * shape[1]).reshape(shape)
+        profile = np.divide(energy, volume, out=np.full(shape, np.nan), where=volume > 0)
 
         for i, (a, b) in enumerate(itertools.pairwise(x_bins)):
-            ax.stairs(energy[i] / volume[i], r_bins, color=f"C{i}", label=f"${a:+.2f} < x < {b:+.2f}$")
+            ax.stairs(profile[i], r_bins, color=f"C{i}", label=f"${a:+.2f} < x < {b:+.2f}$")
             # The slab solution is radially uniform, so it is a flat reference.
             depth = kappa.value * (np.array([a, b]) - lo)
             ax.axhline(2 * (expn(3, depth[0]) - expn(3, depth[1])) / (b - a), color=f"C{i}", ls="--", lw=0.8)
@@ -243,7 +259,7 @@ def _(heating, kappa, mesh):
 
 
 @app.cell(hide_code=True)
-def _(heating, mesh):
+def _(axisymmetric, heating, mesh):
     def _field():
         if mesh.topology.dim != 2:
             return mo.md("*The cell-by-cell field view is drawn for 2D domains only.*")
@@ -263,7 +279,7 @@ def _(heating, mesh):
         ax.set_aspect("equal")
         ax.autoscale_view()
         ax.set_xlabel("x")
-        ax.set_ylabel("y")
+        ax.set_ylabel("r" if axisymmetric else "y")
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="magma"), ax=ax, label="Volumetric heating")
         return fig
 
@@ -272,7 +288,7 @@ def _(heating, mesh):
 
 
 @app.cell(hide_code=True)
-def _(final, initial, mesh):
+def _(axisymmetric, final, initial, mesh):
     def _paths():
         if mesh.topology.dim != 2:
             return mo.md("*Ray paths are drawn for 2D domains only.*")
@@ -295,6 +311,8 @@ def _(final, initial, mesh):
 
         ax.set_aspect("equal")
         ax.autoscale_view()
+        ax.set_xlabel("x")
+        ax.set_ylabel("r" if axisymmetric else "y")
         fig.colorbar(paths, ax=ax, label="Distance flown")
         return fig
 

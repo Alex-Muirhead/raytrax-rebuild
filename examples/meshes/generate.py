@@ -4,7 +4,8 @@
 
 The plane is deliberately mixed tri/quad: one half is recombined into quads and
 the other left as triangles, so the two element types share an interior face.
-That is the case the rebuild exists to support.
+That is the case the rebuild exists to support. It doubles as the axisymmetric
+domain, revolved about its y = 0 edge.
 """
 
 import argparse
@@ -39,13 +40,17 @@ def cylinder(radius: float = 1.0, length: float = 1.0, mesh_size: float = 0.25, 
 
 
 def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, output: Path = HERE / "plane.msh"):
-    """A 2D rectangle, quads on the lower half and triangles on the upper."""
+    """A 2D rectangle, quads on the lower half and triangles on the upper.
+
+    It sits at y >= 0 so the same mesh reads either as an extruded slab or,
+    revolved about y = 0, as the meridional half-plane of `cylinder`.
+    """
     gmsh.initialize()
     gmsh.model.add("plane")
 
-    lower = gmsh.model.occ.addRectangle(-width / 2, -height / 2, 0, width, height / 2)
-    upper = gmsh.model.occ.addRectangle(-width / 2, 0, 0, width, height / 2)
-    # Fragment so the two halves share vertices along y = 0.
+    lower = gmsh.model.occ.addRectangle(-width / 2, 0, 0, width, height / 2)
+    upper = gmsh.model.occ.addRectangle(-width / 2, height / 2, 0, width, height / 2)
+    # Fragment so the two halves share vertices along y = height / 2.
     parts, _ = gmsh.model.occ.fragment([(2, lower)], [(2, upper)])
     gmsh.model.occ.synchronize()
 
@@ -58,11 +63,13 @@ def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, outp
     # duplicates untagged.
     edges: dict[str, list[int]] = {}
     for dim, tag in gmsh.model.getBoundary(parts, oriented=False, combined=True):
-        x, _, _ = gmsh.model.occ.getCenterOfMass(abs(dim), abs(tag))
+        x, y, _ = gmsh.model.occ.getCenterOfMass(abs(dim), abs(tag))
         if abs(x + width / 2) < 1e-9:
             name = "hot_end"
         elif abs(x - width / 2) < 1e-9:
             name = "wall"
+        elif abs(y) < 1e-9:
+            name = "axis"
         else:
             name = "lateral"
         edges.setdefault(name, []).append(abs(tag))
@@ -78,41 +85,9 @@ def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, outp
     print(f"wrote {output}")
 
 
-def meridian(radius: float = 1.0, length: float = 1.0, mesh_size: float = 0.12, output: Path = HERE / "meridian.msh"):
-    """The meridional half-plane of `cylinder`, for revolving about the x axis."""
-    gmsh.initialize()
-    gmsh.model.add("meridian")
-
-    surface = gmsh.model.occ.addRectangle(-length / 2, 0, 0, length, radius)
-    gmsh.model.occ.synchronize()
-    gmsh.model.addPhysicalGroup(dim=2, tags=[surface], name="meridian")
-
-    edges: dict[str, list[int]] = {}
-    for dim, tag in gmsh.model.getBoundary([(2, surface)], oriented=False):
-        x, y, _ = gmsh.model.occ.getCenterOfMass(abs(dim), abs(tag))
-        if abs(x + length / 2) < 1e-9:
-            name = "hot_end"
-        elif abs(x - length / 2) < 1e-9:
-            name = "wall"
-        elif abs(y) < 1e-9:
-            name = "axis"
-        else:
-            name = "lateral"
-        edges.setdefault(name, []).append(abs(tag))
-    for name, tags in edges.items():
-        gmsh.model.addPhysicalGroup(dim=1, tags=tags, name=name)
-
-    gmsh.option.setNumber("Mesh.MeshSizeFactor", mesh_size)
-    gmsh.model.mesh.generate(dim=2)
-    gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
-    gmsh.write(str(output))
-    gmsh.finalize()
-    print(f"wrote {output}")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("which", nargs="?", default="all", choices=["all", "cylinder", "plane", "meridian"])
+    parser.add_argument("which", nargs="?", default="all", choices=["all", "cylinder", "plane"])
     parser.add_argument("--mesh-size", type=float, default=None)
     args = parser.parse_args()
 
@@ -121,5 +96,3 @@ if __name__ == "__main__":
         cylinder(**size)
     if args.which in ("all", "plane"):
         plane(**size)
-    if args.which in ("all", "meridian"):
-        meridian(**size)
