@@ -79,6 +79,43 @@ def _():
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md("""
+    ## Why these meshes
+
+    `slab` is the mixed-element case worth putting on a slide. Triangles are
+    scattered among quads rather than split off into their own half, the cell
+    size varies across the domain, and it is conformal throughout: every
+    interior face has exactly two cells on it, whatever their element types.
+    One file, and it reads either as an extruded slab or, revolved about
+    `y = 0`, as the meridional half-plane of the cylinder. Those are the two
+    `slab_*` cases, and they are the same 1,593 cells either way.
+
+    `cylinder_coarse` exists only to be looked at. The full `cylinder` is
+    34,507 tets, and a ragged half-cut of that many is a grey smear at slide
+    size; at 2,711 the individual cells survive on the cut face. The heating
+    field is taken from the full mesh instead, where the resolution is the
+    point and the cells are not.
+
+    ## Running this notebook
+
+    Unlike `tracing.py`, this one needs the optional pyvista stack:
+
+    ```
+    uv sync --extra visualisation
+    ```
+
+    Every figure here is a screenshot taken off screen. marimo does not render
+    ipywidgets, so there is no interactive VTK backend to fall back on, and
+    `PYVISTA_OFF_SCREEN` is set in the setup block above before pyvista ever
+    imports vtk. Off screen still means a real GL context, so this wants a
+    display: a headless machine needs `xvfb-run`, or the `vtk-osmesa` wheel in
+    place of `vtk`.
+    """)
+    return
+
+
 @app.cell
 def _():
     case = mo.ui.dropdown(list(CASES), value="slab_planar", label="Case")
