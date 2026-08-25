@@ -18,5 +18,11 @@ wheels/
 *.vtk
 *.vtu
 
+# Example artifacts
+examples/figures/
+
 # Doc files from typ
 *.pdf
+
+# Generated figures
+examples/figures/
