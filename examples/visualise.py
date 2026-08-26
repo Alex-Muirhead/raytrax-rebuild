@@ -52,6 +52,11 @@ with app.setup:
         "pyramid": pv.CellType.PYRAMID,
     }
 
+    # The cut face points along +y, so the camera sits on that side to see it,
+    # tilted towards the hot end so the gradient runs across. Position, focal
+    # point, view up -- pyvista's camera_position format.
+    CYLINDER_CAMERA = ((-0.9, 2.5, 1.0), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+
 
 @app.cell(hide_code=True)
 def _():
@@ -251,6 +256,27 @@ def _():
         scale = pixels / max(width, height)
         return max(round(width * scale), 1), max(round(height * scale), 1)
 
+    def projected_extent(mesh, camera_position, margin=0.04):
+        """The mesh's vertices, projected onto the camera's (right, up) view plane.
+
+        A tilted camera's visible frame is not axis-aligned in `(x, y, z)`, so
+        fitting a window to the 3D bounding box leaves whatever margin the
+        axis the camera looks along happens to contribute. Projecting onto the
+        view plane first gives the actual 2D footprint that needs to fit,
+        which `fit_window` can then match exactly, same as the 2D cases.
+        """
+        position, focal, up = (np.array(v, dtype=float) for v in camera_position)
+        forward = focal - position
+        forward /= np.linalg.norm(forward)
+        right = np.cross(forward, up)
+        right /= np.linalg.norm(right)
+        up = np.cross(right, forward)
+
+        u = mesh.geometry.vertices @ right
+        v = mesh.geometry.vertices @ up
+        pad_u, pad_v = (u.max() - u.min()) * margin, (v.max() - v.min()) * margin
+        return u.min() - pad_u, v.min() - pad_v, u.max() + pad_u, v.max() + pad_v
+
     def render(build, path=None, size=(1400, 900), scale=2, transparent=True):
         """Run `build(plotter)` off screen, returning the frame and optionally saving it.
 
@@ -272,7 +298,14 @@ def _():
             # open holds its render window.
             plotter.close()
 
-    return fit_window, half_cut, mesh_extent, render, to_pyvista
+    return (
+        fit_window,
+        half_cut,
+        mesh_extent,
+        projected_extent,
+        render,
+        to_pyvista,
+    )
 
 
 @app.cell
@@ -296,25 +329,33 @@ def _(half_cut, to_pyvista):
 
         `camera.tight` would fill the frame edge to edge, which puts the bar on
         top of the geometry, and in 3D it discards the camera set here.
-        `tight_bounds`, an already-padded `(xmin, ymin, xmax, ymax)`, instead
-        fits a top-down camera exactly to that box -- for bare 2D exports,
-        where there is no bar or legend competing for the margin. Only valid
-        face on: a tilted 3D camera has no axis-aligned frame to fit.
+        `tight_bounds` fits the camera exactly to the mesh instead, for bare
+        exports where nothing sits in that margin: face on, it is a
+        world-space `(xmin, ymin, xmax, ymax)`; tilted, it is the mesh's own
+        footprint on the camera's view plane, from `projected_extent`.
+
+        Tilted still calls `reset_camera()` first, for its correct centring --
+        but its `parallel_scale` fits the bounding box's *diagonal*, which is
+        looser than the actual footprint for any shape that is not roughly
+        cubic (a cylinder cut in half is not), so that gets overwritten with
+        the exact value once the window is sized to hold it tight.
         """
-        if tight_bounds is not None:
+        if tight_bounds is not None and not three_d:
             xmin, ymin, xmax, ymax = tight_bounds
             cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
             plotter.camera_position = [(cx, cy, 1.0), (cx, cy, 0.0), (0.0, 1.0, 0.0)]
             plotter.camera.parallel_scale = (ymax - ymin) / 2
             return
         if three_d:
-            # The cut face points along +y, so the camera sits on that side to
-            # see it, tilted towards the hot end so the gradient runs across.
-            plotter.camera_position = [(-0.9, 2.5, 1.0), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)]
+            plotter.camera_position = list(CYLINDER_CAMERA)
         else:
             plotter.view_xy()
         plotter.reset_camera()
-        plotter.camera.zoom(0.92)
+        if tight_bounds is not None:
+            _, vmin, _, vmax = tight_bounds
+            plotter.camera.parallel_scale = (vmax - vmin) / 2
+        else:
+            plotter.camera.zoom(0.92)
 
     def draw(
         plotter,
@@ -574,7 +615,7 @@ def _():
 @app.cell
 def _(kappa, num_rays):
     planar_mesh, _planar_geom, planar_heating = solve("slab_planar", kappa.value, int(num_rays.value))
-    axisym_mesh, _axisym_geom, axisym_heating = solve("slab_axisymmetric", kappa.value, int(num_rays.value))
+    _axisym_mesh, _axisym_geom, axisym_heating = solve("slab_axisymmetric", kappa.value, int(num_rays.value))
     return axisym_heating, planar_heating, planar_mesh
 
 
@@ -691,6 +732,7 @@ def _(
     num_rays,
     planar_heating,
     planar_mesh,
+    projected_extent,
     radial_csv,
     radial_profile,
     ragged,
@@ -749,16 +791,34 @@ def _(
         return written
 
     def _export_3d(case_dir, mesh, geom, heating):
-        """Tilted-camera cases: no flat viewbox to give, so no bounds JSON."""
+        """Tilted-camera cases: no flat viewbox to give, so no bounds JSON.
+
+        The window is sized to the mesh's own footprint (projected onto the
+        tilted camera's view plane, not the raw 3D bounds), and that same
+        footprint is passed on as `tight_bounds` so `frame` can overwrite
+        `reset_camera`'s loose diagonal-fit scale with the exact one -- without
+        both, a cut-in-half cylinder still renders into a small fraction of
+        the frame no matter how the window is shaped.
+        """
         written = []
+        extent = projected_extent(mesh, CYLINDER_CAMERA)
+        size = fit_window(extent)
 
         mesh_path = case_dir / "mesh.png"
-        render(lambda plotter: draw_mesh(plotter, mesh, ragged.value, legend=False), mesh_path, size=(1600, 1000))
+        render(
+            lambda plotter: draw_mesh(plotter, mesh, ragged.value, legend=False, tight_bounds=extent),
+            mesh_path,
+            size=size,
+        )
         written.append(mesh_path)
         # cylinder cases are tets only, so draw_mesh never has a legend to report
 
         heating_path = case_dir / "heating.png"
-        render(lambda plotter: draw(plotter, mesh, heating, ragged.value, bar=False), heating_path, size=(1600, 1000))
+        render(
+            lambda plotter: draw(plotter, mesh, heating, ragged.value, bar=False, tight_bounds=extent),
+            heating_path,
+            size=size,
+        )
         written.append(heating_path)
         written.append(_save_json(case_dir / "heating.json", {"colorbar": _colorbar(heating)}))
 
