@@ -1,7 +1,7 @@
 # Examples
 
-Three marimo notebooks. Two share one problem -- a cold absorbing gas heated by
-a hot wall, on a 2D plane or a 3D cylinder -- and the third is a re-entry shock
+Four marimo notebooks. Three share one problem -- a cold absorbing gas heated by
+a hot wall, on a 2D plane or a 3D cylinder -- and the fourth is a re-entry shock
 layer. Each notebook explains its own setup; this is only the map.
 
 Meshes are generated, not committed, so run this first:
@@ -25,6 +25,15 @@ analytic value. It needs the optional pyvista stack and a display.
 ```
 uv sync --extra visualisation
 uv run marimo edit examples/visualise.py    # "Write every figure and CSV" fills examples/figures
+```
+
+`convergence.py` is the accuracy study: the same problem over four decades of
+ray count, on both readings of the 2D mesh and on a coarse cylinder, with the
+RMSE against the tangent-slab solution written to CSV. Matplotlib only, but a
+full sweep is 75 traces, about six minutes on a GPU.
+
+```
+uv run marimo edit examples/convergence.py    # tick "Run the sweep"
 ```
 
 `reentry.py` is the shock layer around a Stardust-like capsule, solved
