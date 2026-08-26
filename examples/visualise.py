@@ -5,6 +5,7 @@ app = marimo.App(width="medium")
 
 with app.setup:
     import itertools
+    import json
     import os
     from pathlib import Path
 
@@ -229,6 +230,30 @@ def _():
         # boundary itself: stair-stepped, and it bulges past y = 0.
         return grid.extract_points(grid.points[:, 1] <= 0.0, adjacent_cells=True)
 
+    def mesh_extent(mesh, margin=0.04):
+        """Padded (xmin, ymin, xmax, ymax) of the mesh's own vertices, x and y only.
+
+        Read off the vertices rather than a camera, so it does not depend on
+        framing: slab_planar and slab_axisymmetric are the same file, and
+        always come out with the same box.
+        """
+        vertices = mesh.geometry.vertices[:, :2]
+        (xmin, ymin), (xmax, ymax) = vertices.min(axis=0), vertices.max(axis=0)
+        pad_x, pad_y = (xmax - xmin) * margin, (ymax - ymin) * margin
+        return xmin - pad_x, ymin - pad_y, xmax + pad_x, ymax + pad_y
+
+    def fit_window(bounds, pixels=1600):
+        """Window size in pixels matching the aspect ratio of `bounds`.
+
+        A parallel camera's horizontal extent is its vertical extent times the
+        window's aspect ratio, so an exact tight fit needs the window shaped to
+        match the bounds before the camera is ever set.
+        """
+        xmin, ymin, xmax, ymax = bounds
+        width, height = xmax - xmin, ymax - ymin
+        scale = pixels / max(width, height)
+        return max(round(width * scale), 1), max(round(height * scale), 1)
+
     def render(build, path=None, size=(1400, 900), scale=2, transparent=True):
         """Run `build(plotter)` off screen, returning the frame and optionally saving it.
 
@@ -250,7 +275,7 @@ def _():
             # open holds its render window.
             plotter.close()
 
-    return half_cut, render, to_pyvista
+    return fit_window, half_cut, mesh_extent, render, to_pyvista
 
 
 @app.cell
@@ -269,12 +294,22 @@ def _(half_cut, to_pyvista):
             "height": 0.5,
         }
 
-    def frame(plotter, three_d):
+    def frame(plotter, three_d, tight_bounds=None):
         """Fit the view, leaving the margin the scalar bar is placed in.
 
         `camera.tight` would fill the frame edge to edge, which puts the bar on
         top of the geometry, and in 3D it discards the camera set here.
+        `tight_bounds`, an already-padded `(xmin, ymin, xmax, ymax)`, instead
+        fits a top-down camera exactly to that box -- for bare 2D exports,
+        where there is no bar or legend competing for the margin. Only valid
+        face on: a tilted 3D camera has no axis-aligned frame to fit.
         """
+        if tight_bounds is not None:
+            xmin, ymin, xmax, ymax = tight_bounds
+            cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+            plotter.camera_position = [(cx, cy, 1.0), (cx, cy, 0.0), (0.0, 1.0, 0.0)]
+            plotter.camera.parallel_scale = (ymax - ymin) / 2
+            return
         if three_d:
             # The cut face points along +y, so the camera sits on that side to
             # see it, tilted towards the hot end so the gradient runs across.
@@ -284,13 +319,23 @@ def _(half_cut, to_pyvista):
         plotter.reset_camera()
         plotter.camera.zoom(0.92)
 
-    def draw(plotter, mesh, values=None, ragged=True, cmap="magma", label="Volumetric heating", bar=True):
+    def draw(
+        plotter, mesh, values=None, ragged=True, cmap="magma", label="Volumetric heating", bar=True, tight_bounds=None
+    ):
         """Add one case to a plotter: cut in half if it is 3D, face on if it is 2D."""
         grid = to_pyvista(mesh, values)
         if values is None:
             colours = {"color": "#d9d9d9"}
         else:
-            colours = {"scalars": "heating", "cmap": cmap, "show_scalar_bar": bar}
+            # Pinned to the full field, not the piece pyvista actually draws:
+            # `half_cut` in 3D would otherwise narrow the range to whatever
+            # survives the cut, and the exported colorbar range would lie.
+            colours = {
+                "scalars": "heating",
+                "cmap": cmap,
+                "show_scalar_bar": bar,
+                "clim": (float(np.nanmin(values)), float(np.nanmax(values))),
+            }
             if bar:
                 colours["scalar_bar_args"] = bar_args(label)
 
@@ -316,7 +361,7 @@ def _(half_cut, to_pyvista):
             # colour stops reading off the colour bar.
             plotter.add_mesh(grid, show_edges=True, edge_color="#262626", line_width=1.0, lighting=False, **colours)
 
-        frame(plotter, mesh.topology.dim == 3)
+        frame(plotter, mesh.topology.dim == 3, tight_bounds=tight_bounds)
 
     def element_vertices(mesh):
         """Vertices per cell, so a mixed mesh can be coloured by element type."""
@@ -325,24 +370,39 @@ def _(half_cut, to_pyvista):
             counts[mesh.topology.cell_block == index] = element.num_vertices
         return counts
 
-    def draw_mesh(plotter, mesh, ragged=True):
-        """The bare mesh, coloured by element type where there is more than one."""
+    def draw_mesh(plotter, mesh, ragged=True, legend=True, tight_bounds=None):
+        """The bare mesh, coloured by element type where there is more than one.
+
+        Returns the legend entries (label and colour, one per element type), or
+        `None` where there is only one type to draw. `legend=False` skips
+        drawing the on-image legend actor while still returning its contents,
+        for callers that want the data without the picture.
+        """
         counts = element_vertices(mesh)
         names = {3: "triangle", 4: "quad", 5: "pyramid", 6: "wedge", 8: "hexahedron"}
         present = sorted(np.unique(counts).astype(int))
         if len(present) < 2:
-            return draw(plotter, mesh, ragged=ragged)
+            draw(plotter, mesh, ragged=ragged, tight_bounds=tight_bounds)
+            return None
 
         # Two element types, so two flat colours and a legend, not a ramp.
         palette = ["#4c72b0", "#dd8452", "#55a868", "#c44e52"]
-        draw(plotter, mesh, counts, ragged, cmap=palette[: len(present)], label="", bar=False)
-        plotter.add_legend(
-            [[names.get(count, str(count)), colour] for count, colour in zip(present, palette, strict=False)],
-            bcolor="white",
-            border=True,
-            size=(0.13, 0.09),
-            loc="upper right",
+        draw(
+            plotter, mesh, counts, ragged, cmap=palette[: len(present)], label="", bar=False, tight_bounds=tight_bounds
         )
+        entries = [
+            {"label": names.get(count, str(count)), "colour": colour}
+            for count, colour in zip(present, palette, strict=False)
+        ]
+        if legend:
+            plotter.add_legend(
+                [[entry["label"], entry["colour"]] for entry in entries],
+                bcolor="white",
+                border=True,
+                size=(0.13, 0.09),
+                loc="upper right",
+            )
+        return entries
 
     return draw, draw_mesh
 
@@ -375,7 +435,7 @@ def _():
 
     def save(path, columns, header):
         """Write one flat CSV of the named columns."""
-        FIGURES.mkdir(exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         np.savetxt(path, np.column_stack(columns), delimiter=",", header=header, comments="", fmt="%.8g")
         return path
 
@@ -486,8 +546,18 @@ def _():
     mo.md(f"""
     ## Export
 
-    Renders all four cases at the current kappa and ray count into
-    `examples/figures/`. This retraces each case, so it takes a minute.
+    Renders all four cases at the current kappa and ray count, one folder per
+    case under `examples/figures/` (`slab_planar/`, `slab_axisymmetric/`,
+    `cylinder_coarse/`, `cylinder/`), each with `mesh.png`, `heating.png`,
+    `axial.csv`, and, where there is an axis, `radial.csv`. This retraces each
+    case, so it takes a minute.
+
+    The mesh and heating renders hold only the geometry -- no scalar bar or
+    legend -- so each comes with a `.json` sidecar giving the legend contents
+    or the colorbar range. The two `slab_*` cases are shot face on, and also
+    get the `(xmin, ymin, xmax, ymax)` world bounds of that view for
+    alignment; the cylinder cases use a tilted camera, so there is no flat
+    viewbox to give.
 
     {write}
     """)
@@ -500,7 +570,9 @@ def _(
     axial_profile,
     draw,
     draw_mesh,
+    fit_window,
     kappa,
+    mesh_extent,
     num_rays,
     radial_csv,
     radial_profile,
@@ -509,29 +581,88 @@ def _(
     solve,
     write,
 ):
-    def _shoot(name, suffix, build):
-        path = FIGURES / f"{name}_{suffix}.png"
-        render(build, path, size=(1600, 1000))
+    def _save_json(path, data):
+        path.write_text(json.dumps(data, indent=2))
         return path
 
-    def _export_case(name, axisymmetric):
-        mesh, geom, heating = solve(name, kappa.value, int(num_rays.value))
-        written = [
-            _shoot(name, "mesh", lambda plotter: draw_mesh(plotter, mesh, ragged.value)),
-            _shoot(name, "heating", lambda plotter: draw(plotter, mesh, heating, ragged.value)),
-        ]
-        written.append(axial_csv(FIGURES / f"axial_{name}.csv", *axial_profile(mesh, geom, heating, kappa.value)))
+    def _colorbar(heating):
+        # `solve`'s hot_end source is face area with sigma T^4 = 1, not a real
+        # power, so deposit carries units of face measure rather than W. Heating
+        # is deposit over cell volume, one dimension short of W/m^3 either way
+        # (length over area in 2D, area over volume in 3D), so it comes out 1/m.
+        return {
+            "min": float(heating.min()),
+            "max": float(heating.max()),
+            "cmap": "magma",
+            "label": "Volumetric heating (1/m)",
+        }
+
+    def _export_2d(case_dir, mesh, geom, heating, axisymmetric):
+        """Face-on cases: an exact camera fit, so the bounds are worth writing out."""
+        bounds = mesh_extent(mesh)
+        xmin, ymin, xmax, ymax = bounds
+        size = fit_window(bounds)
+        written = []
+
+        entries = None
+
+        def _mesh_build(plotter):
+            nonlocal entries
+            entries = draw_mesh(plotter, mesh, ragged.value, legend=False, tight_bounds=bounds)
+
+        mesh_path = case_dir / "mesh.png"
+        render(_mesh_build, mesh_path, size=size)
+        written.append(mesh_path)
+        mesh_meta = {"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax}
+        if entries:
+            mesh_meta["legend"] = entries
+        written.append(_save_json(case_dir / "mesh.json", mesh_meta))
+
+        heating_path = case_dir / "heating.png"
+        render(lambda plotter: draw(plotter, mesh, heating, bar=False, tight_bounds=bounds), heating_path, size=size)
+        written.append(heating_path)
+        heating_meta = {"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax, "colorbar": _colorbar(heating)}
+        written.append(_save_json(case_dir / "heating.json", heating_meta))
+
+        written.append(axial_csv(case_dir / "axial.csv", *axial_profile(mesh, geom, heating, kappa.value)))
         radial = radial_profile(mesh, geom, heating, kappa.value, axisymmetric)
         if radial is not None:
-            written.append(radial_csv(FIGURES / f"radial_{name}.csv", *radial))
+            written.append(radial_csv(case_dir / "radial.csv", *radial))
         return written
+
+    def _export_3d(case_dir, mesh, geom, heating):
+        """Tilted-camera cases: no flat viewbox to give, so no bounds JSON."""
+        written = []
+
+        mesh_path = case_dir / "mesh.png"
+        render(lambda plotter: draw_mesh(plotter, mesh, ragged.value, legend=False), mesh_path, size=(1600, 1000))
+        written.append(mesh_path)
+        # cylinder cases are tets only, so draw_mesh never has a legend to report
+
+        heating_path = case_dir / "heating.png"
+        render(lambda plotter: draw(plotter, mesh, heating, ragged.value, bar=False), heating_path, size=(1600, 1000))
+        written.append(heating_path)
+        written.append(_save_json(case_dir / "heating.json", {"colorbar": _colorbar(heating)}))
+
+        written.append(axial_csv(case_dir / "axial.csv", *axial_profile(mesh, geom, heating, kappa.value)))
+        radial = radial_profile(mesh, geom, heating, kappa.value, axisymmetric=False)
+        if radial is not None:
+            written.append(radial_csv(case_dir / "radial.csv", *radial))
+        return written
+
+    def _export_case(name, axisymmetric):
+        case_dir = FIGURES / name
+        case_dir.mkdir(parents=True, exist_ok=True)
+        mesh, geom, heating = solve(name, kappa.value, int(num_rays.value))
+        if mesh.topology.dim == 3:
+            return _export_3d(case_dir, mesh, geom, heating)
+        return _export_2d(case_dir, mesh, geom, heating, axisymmetric)
 
     def _export():
         if not write.value:
             return mo.md("*Not written yet.*")
-        FIGURES.mkdir(exist_ok=True)
         written = [path for name, (_, axi) in CASES.items() for path in _export_case(name, axi)]
-        return mo.md("Wrote:\n\n" + "\n".join(f"- `{path.name}`" for path in written))
+        return mo.md("Wrote:\n\n" + "\n".join(f"- `{path.relative_to(FIGURES)}`" for path in written))
 
     _export()
     return
