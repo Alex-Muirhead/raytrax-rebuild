@@ -4,6 +4,7 @@ __generated_with = "0.24.0"
 app = marimo.App(width="medium")
 
 with app.setup:
+    import json
     from pathlib import Path
 
     import jax
@@ -28,6 +29,7 @@ with app.setup:
     # The capsule is solid and unmeshed, so it is drawn as a silhouette.
     CAPSULE = "#cfd2d4"
     BLOCK_COLOURS = ("#4c72b0", "#dd8452", "#55a868", "#c44e52")
+    ZOOM_BOUNDS = ((-0.04, -0.005), (0.14, 0.26))
 
 
 @app.cell(hide_code=True)
@@ -250,8 +252,9 @@ def _(capsule, mesh):
         if zoom:
             # The stagnation standoff is a fiftieth of the domain, so the layer
             # is only legible on its own scale.
-            ax.set_xlim(-0.04, 0.14)
-            ax.set_ylim(-0.005, 0.26)
+            (xmin, ymin), (xmax, ymax) = ZOOM_BOUNDS
+            ax.set_xlim(xmin, xmax)
+            ax.set_ylim(ymin, ymax)
         ax.set_xlabel("x (m)")
         ax.set_ylabel("r (m)")
 
@@ -274,7 +277,58 @@ def _(capsule, mesh):
             ax.add_collection(polys)
         finish(ax, zoom)
 
-    return draw_field, draw_mesh
+    def domain_bounds():
+        """Bounding box of the cells and the capsule outline, for viewbox alignment."""
+        points = [capsule()]
+        for _, _, corners in blocks():
+            points.append(corners.reshape(-1, 2))
+        points = np.vstack(points)
+        return points.min(axis=0), points.max(axis=0)
+
+    def _export_axes(bounds, pixels=1600):
+        """A bare, unlabelled axes sized so the canvas maps exactly onto `bounds`."""
+        (xmin, ymin), (xmax, ymax) = bounds
+        dpi = 200
+        scale = pixels / max(xmax - xmin, ymax - ymin)
+        fig = plt.figure(figsize=((xmax - xmin) * scale / dpi, (ymax - ymin) * scale / dpi), dpi=dpi)
+        ax = fig.add_axes((0, 0, 1, 1))
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        ax.set_aspect("equal")
+        ax.axis("off")
+        return fig, ax
+
+    def export_mesh(zoom):
+        """The mesh cells and capsule silhouette alone, cropped to the plotted bounds.
+
+        No legend or axes -- only the fills, plus the legend contents as data so
+        Typst can redraw the key.
+        """
+        bounds = ZOOM_BOUNDS if zoom else domain_bounds()
+        fig, ax = _export_axes(bounds)
+        legend = []
+        for (element, rows, corners), colour in zip(blocks(), BLOCK_COLOURS, strict=False):
+            ax.add_collection(
+                PolyCollection(corners, facecolors=colour, edgecolors="#26262699", linewidths=0.25, alpha=0.55)
+            )
+            legend.append({"label": f"{len(rows):,} {element.name}", "colour": colour})
+        outline = capsule()
+        ax.fill(outline[:, 0], outline[:, 1], color=CAPSULE, zorder=3, ec="#3f3f3f", lw=0.8)
+        return fig, bounds, legend
+
+    def export_field(values, norm, zoom, cmap="magma"):
+        """The field fill alone, cropped to the plotted bounds, no colorbar."""
+        bounds = ZOOM_BOUNDS if zoom else domain_bounds()
+        fig, ax = _export_axes(bounds)
+        for _, rows, corners in blocks():
+            polys = PolyCollection(corners, cmap=cmap, norm=norm, linewidths=0.2, edgecolors="face")
+            polys.set_array(values[rows])
+            ax.add_collection(polys)
+        outline = capsule()
+        ax.fill(outline[:, 0], outline[:, 1], color=CAPSULE, zorder=3, ec="#3f3f3f", lw=0.8)
+        return fig, bounds
+
+    return draw_field, draw_mesh, export_field, export_mesh
 
 
 @app.cell
@@ -429,8 +483,11 @@ def _():
     mo.md(f"""
     ## Export
 
-    Writes the three figures above at the current settings into
-    `examples/figures/`, alongside the wall flux and the cell heating as CSV.
+    Every export is meant to be laid out in Typst, not read on its own. Line
+    and scatter data go out as CSV. The mesh and heating images hold only the
+    fills -- no axes, labels, legend, or colorbar -- so each comes with a JSON
+    sidecar giving the `(xmin, ymin, xmax, ymax)` viewbox the image was cropped
+    to, plus the colorbar range or legend contents where those apply.
 
     {write}
     """)
@@ -438,11 +495,24 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(field_figure, flux, heating, mesh, mesh_figure, wall_figure, wall_profile, write):
-    def _save(name, columns, header):
+def _(export_field, export_mesh, flux, heating, mesh, wall_flux, wall_profile, write):
+    def _save_csv(name, columns, header):
         path = FIGURES / name
         np.savetxt(path, np.column_stack(columns), delimiter=",", header=header, comments="", fmt="%.8g")
         return path
+
+    def _save_json(name, data):
+        path = FIGURES / name
+        path.write_text(json.dumps(data, indent=2))
+        return path
+
+    def _save_image(stem, fig, bounds, **metadata):
+        (xmin, ymin), (xmax, ymax) = bounds
+        image = FIGURES / f"{stem}.png"
+        fig.savefig(image, transparent=True)
+        plt.close(fig)
+        sidecar = _save_json(f"{stem}.json", {"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax, **metadata})
+        return image, sidecar
 
     def _export():
         if not write.value:
@@ -450,18 +520,28 @@ def _(field_figure, flux, heating, mesh, mesh_figure, wall_figure, wall_profile,
         FIGURES.mkdir(exist_ok=True)
 
         written = []
-        for name, figure in (("mesh", mesh_figure), ("heating", field_figure), ("wall_flux", wall_figure)):
-            path = FIGURES / f"reentry_{name}.png"
-            figure().savefig(path, dpi=200, bbox_inches="tight", transparent=True)
-            written.append(path)
+        heating_min, heating_max = float(heating.min() / 1e9), float(heating.max() / 1e9)
+        norm = plt.Normalize(heating_min, heating_max)
+        for zoom, suffix in ((False, "whole"), (True, "zoom")):
+            fig, bounds, legend = export_mesh(zoom)
+            written.extend(_save_image(f"reentry_mesh_{suffix}", fig, bounds, legend=legend))
+
+            fig, bounds = export_field(heating / 1e9, norm, zoom)
+            colorbar = {"min": heating_min, "max": heating_max, "cmap": "magma", "label": "GW/m3"}
+            written.extend(_save_image(f"reentry_heating_{suffix}", fig, bounds, colorbar=colorbar))
 
         wall, distance, _ = wall_profile()
         centroid = mesh.geometry.faces.centroid[wall]
         written.append(
-            _save("reentry_wall_flux.csv", (distance, centroid[:, 0], centroid[:, 1], flux[wall]), "s,x,r,flux")
+            _save_csv("reentry_wall_flux.csv", (distance, centroid[:, 0], centroid[:, 1], flux[wall]), "s,x,r,flux")
         )
+        edges, binned = wall_flux()
+        written.append(_save_csv("reentry_wall_flux_binned.csv", ((edges[:-1] + edges[1:]) / 2, binned), "s,flux"))
+        shoulder = distance[np.argmax(mesh.geometry.faces.centroid[wall, 1])]
+        written.append(_save_json("reentry_wall_flux.json", {"shoulder": float(shoulder)}))
+
         cells = mesh.geometry.cells.centroid
-        written.append(_save("reentry_heating.csv", (cells[:, 0], cells[:, 1], heating), "x,r,heating"))
+        written.append(_save_csv("reentry_heating.csv", (cells[:, 0], cells[:, 1], heating), "x,r,heating"))
         return mo.md("Wrote:\n\n" + "\n".join(f"- `{path.name}`" for path in written))
 
     _export()
