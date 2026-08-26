@@ -127,54 +127,51 @@ def _():
     return case, kappa, num_rays, ragged
 
 
-@app.cell
-def _():
-    def solve(name, absorptivity, rays):
-        """Trace one case, returning the mesh, its weighting, and cell heating.
+@app.function
+def solve(name, absorptivity, rays):
+    """Trace one case, returning the mesh, its weighting, and cell heating.
 
-        `geom` is what the physics uses and is ring-weighted when revolved;
-        positions stay meridional, so plots read `mesh.geometry` instead.
-        """
-        stem, axisymmetric = CASES[name]
-        path = MESHES / f"{stem}.msh"
-        if not path.exists():
-            raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
+    `geom` is what the physics uses and is ring-weighted when revolved;
+    positions stay meridional, so plots read `mesh.geometry` instead.
+    """
+    stem, axisymmetric = CASES[name]
+    path = MESHES / f"{stem}.msh"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
 
-        mesh = vtk.read(path)
-        geom = geometry.revolve(mesh.geometry) if axisymmetric else mesh.geometry
-        trace_path = AxisymmetricPath() if axisymmetric else LinearPath()
+    mesh = vtk.read(path)
+    geom = geometry.revolve(mesh.geometry) if axisymmetric else mesh.geometry
+    trace_path = AxisymmetricPath() if axisymmetric else LinearPath()
 
-        scene = scene_module.build(mesh.topology, geom, mesh.groups)
-        scene_module.validate(mesh.topology, geom)
+    scene = scene_module.build(mesh.topology, geom, mesh.groups)
+    scene_module.validate(mesh.topology, geom)
 
-        kinds = {"hot_end": Kind.ABSORB, "wall": Kind.ABSORB, "lateral": Kind.SPECULAR}
-        if "axis" in mesh.groups.names:
-            # Revolved, the y = 0 edge is the axis and nothing should reach it.
-            # Extruded it is just another side, and has to match `lateral` or
-            # the slab stops being symmetric.
-            kinds["axis"] = Kind.ABSORB if axisymmetric else Kind.SPECULAR
-        table = interactions.build(mesh.groups, kinds)
+    kinds = {"hot_end": Kind.ABSORB, "wall": Kind.ABSORB, "lateral": Kind.SPECULAR}
+    if "axis" in mesh.groups.names:
+        # Revolved, the y = 0 edge is the axis and nothing should reach it.
+        # Extruded it is just another side, and has to match `lateral` or
+        # the slab stops being symmetric.
+        kinds["axis"] = Kind.ABSORB if axisymmetric else Kind.SPECULAR
+    table = interactions.build(mesh.groups, kinds)
 
-        hot = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("hot_end"))
-        source = sources.build(jnp.zeros(mesh.topology.num_cells), geom.faces.area[hot], hot)
+    hot = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("hot_end"))
+    source = sources.build(jnp.zeros(mesh.topology.num_cells), geom.faces.area[hot], hot)
 
-        _, deposit = transport.trace(
-            jax.random.key(4),
-            scene,
-            trace_path,
-            table,
-            jnp.full(mesh.topology.num_cells, absorptivity),
-            source,
-            num_rays=rays,
-            max_steps=4000,
-        )
-        return mesh, geom, np.asarray(deposit.cells) / geom.cells.volume
-
-    return (solve,)
+    _, deposit = transport.trace(
+        jax.random.key(4),
+        scene,
+        trace_path,
+        table,
+        jnp.full(mesh.topology.num_cells, absorptivity),
+        source,
+        num_rays=rays,
+        max_steps=4000,
+    )
+    return mesh, geom, np.asarray(deposit.cells) / geom.cells.volume
 
 
 @app.cell
-def _(case, kappa, num_rays, solve):
+def _(case, kappa, num_rays):
     mesh, geom, heating = solve(case.value, kappa.value, int(num_rays.value))
     axisymmetric = CASES[case.value][1]
     return axisymmetric, geom, heating, mesh
@@ -320,9 +317,22 @@ def _(half_cut, to_pyvista):
         plotter.camera.zoom(0.92)
 
     def draw(
-        plotter, mesh, values=None, ragged=True, cmap="magma", label="Volumetric heating", bar=True, tight_bounds=None
+        plotter,
+        mesh,
+        values=None,
+        ragged=True,
+        cmap="magma",
+        label="Volumetric heating",
+        bar=True,
+        tight_bounds=None,
+        symmetric=False,
     ):
-        """Add one case to a plotter: cut in half if it is 3D, face on if it is 2D."""
+        """Add one case to a plotter: cut in half if it is 3D, face on if it is 2D.
+
+        `symmetric` centres the colour range on zero at `+/- max(abs(values))`,
+        for a signed field (a difference) where zero should sit on a fixed
+        colour rather than wherever the data happens to average out.
+        """
         grid = to_pyvista(mesh, values)
         if values is None:
             colours = {"color": "#d9d9d9"}
@@ -330,12 +340,12 @@ def _(half_cut, to_pyvista):
             # Pinned to the full field, not the piece pyvista actually draws:
             # `half_cut` in 3D would otherwise narrow the range to whatever
             # survives the cut, and the exported colorbar range would lie.
-            colours = {
-                "scalars": "heating",
-                "cmap": cmap,
-                "show_scalar_bar": bar,
-                "clim": (float(np.nanmin(values)), float(np.nanmax(values))),
-            }
+            if symmetric:
+                bound = float(np.nanmax(np.abs(values)))
+                clim = (-bound, bound)
+            else:
+                clim = (float(np.nanmin(values)), float(np.nanmax(values)))
+            colours = {"scalars": "heating", "cmap": cmap, "show_scalar_bar": bar, "clim": clim}
             if bar:
                 colours["scalar_bar_args"] = bar_args(label)
 
@@ -463,7 +473,7 @@ def _():
         ]
         return save(path, np.vstack(bands).T, "band_lo,band_hi,lo,hi,mid,heating,tangent_slab")
 
-    return axial_csv, radial_csv, rebin, tangent_slab
+    return axial_csv, radial_csv, rebin, save, tangent_slab
 
 
 @app.cell
@@ -542,6 +552,104 @@ def _(axisymmetric, geom, heating, kappa, mesh, radial_profile):
 
 @app.cell(hide_code=True)
 def _():
+    mo.md("""
+    ## Planar against axisymmetric
+
+    `slab_planar` and `slab_axisymmetric` are the same 1,593 cells, the same
+    trace, the same everything except how the geometry is read: extruded flat
+    for one, revolved about `y = 0` for the other. Cell for cell, in the same
+    order, so the two heating fields subtract directly with no interpolation.
+
+    Any difference is the axisymmetric geometry, not sampling noise: revolving
+    the mesh turns each `y` into a radius, so a cell's volume is its flat area
+    times the ring it sweeps, vanishing towards `y = 0` rather than staying
+    uniform the way the planar reading treats it. Heating divides deposited
+    energy by that volume, so cells nearest the axis are where the two
+    readings are most exposed to disagreeing -- watch that edge in the figure
+    below, not the wall end of the domain.
+    """)
+    return
+
+
+@app.cell
+def _(kappa, num_rays):
+    planar_mesh, _planar_geom, planar_heating = solve("slab_planar", kappa.value, int(num_rays.value))
+    axisym_mesh, _axisym_geom, axisym_heating = solve("slab_axisymmetric", kappa.value, int(num_rays.value))
+    return axisym_heating, planar_heating, planar_mesh
+
+
+@app.cell
+def _(axisym_heating, planar_heating):
+    def compare(planar, axisymmetric):
+        """Signed difference, and that difference as a fraction of the peak planar value.
+
+        Normalised against the peak rather than the local value: heating decays
+        by orders of magnitude away from the wall, so dividing cell by cell
+        would blow up wherever the planar reading is near zero, without saying
+        anything new about the size of the disagreement.
+        """
+        diff = axisymmetric - planar
+        peak = float(np.max(np.abs(planar)))
+        return diff, diff / peak
+
+    diff, relative = compare(planar_heating, axisym_heating)
+    return diff, relative
+
+
+@app.cell(hide_code=True)
+def _(diff, planar_heating, relative):
+    mo.md(f"""
+    | | |
+    |---|---|
+    | max absolute difference | {np.max(np.abs(diff)):.4f} 1/m |
+    | mean absolute difference | {np.mean(np.abs(diff)):.4f} 1/m |
+    | max relative to peak planar heating | {np.max(np.abs(relative)):.2%} |
+    | peak planar heating | {planar_heating.max():.4f} 1/m |
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(diff, draw, planar_mesh, ragged, relative, render):
+    mo.hstack(
+        [
+            mo.image(
+                render(
+                    lambda plotter: draw(
+                        plotter,
+                        planar_mesh,
+                        diff,
+                        ragged.value,
+                        cmap="RdBu_r",
+                        label="Difference (1/m)",
+                        symmetric=True,
+                    )
+                ),
+                width=440,
+            ),
+            mo.image(
+                render(
+                    lambda plotter: draw(
+                        plotter,
+                        planar_mesh,
+                        relative,
+                        ragged.value,
+                        cmap="RdBu_r",
+                        label="Relative to peak planar",
+                        symmetric=True,
+                    )
+                ),
+                width=440,
+            ),
+        ],
+        justify="start",
+        gap=2,
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _():
     write = mo.ui.run_button(label="Write every figure and CSV")
     mo.md(f"""
     ## Export
@@ -559,6 +667,11 @@ def _():
     alignment; the cylinder cases use a tilted camera, so there is no flat
     viewbox to give.
 
+    A fifth folder, `slab_comparison/`, holds the planar-against-axisymmetric
+    comparison above: `difference.png` and `relative.png`, each bare with a
+    `.json` sidecar, plus `comparison.csv` with both fields and their
+    difference, one row per cell.
+
     {write}
     """)
     return (write,)
@@ -568,17 +681,22 @@ def _():
 def _(
     axial_csv,
     axial_profile,
+    axisym_heating,
+    diff,
     draw,
     draw_mesh,
     fit_window,
     kappa,
     mesh_extent,
     num_rays,
+    planar_heating,
+    planar_mesh,
     radial_csv,
     radial_profile,
     ragged,
+    relative,
     render,
-    solve,
+    save,
     write,
 ):
     def _save_json(path, data):
@@ -658,10 +776,50 @@ def _(
             return _export_3d(case_dir, mesh, geom, heating)
         return _export_2d(case_dir, mesh, geom, heating, axisymmetric)
 
+    def _export_field(case_dir, stem, mesh, values, bounds, label):
+        """One signed field, bare and centred on zero, with its own colorbar range."""
+        size = fit_window(bounds)
+        path = case_dir / f"{stem}.png"
+        render(
+            lambda plotter: draw(plotter, mesh, values, cmap="RdBu_r", bar=False, tight_bounds=bounds, symmetric=True),
+            path,
+            size=size,
+        )
+        bound = float(np.max(np.abs(values)))
+        xmin, ymin, xmax, ymax = bounds
+        meta = {
+            "xmin": xmin,
+            "ymin": ymin,
+            "xmax": xmax,
+            "ymax": ymax,
+            "colorbar": {"min": -bound, "max": bound, "cmap": "RdBu_r", "label": label},
+        }
+        return [path, _save_json(case_dir / f"{stem}.json", meta)]
+
+    def _export_comparison():
+        """Planar against axisymmetric: same cells, same order, so a direct subtraction."""
+        case_dir = FIGURES / "slab_comparison"
+        case_dir.mkdir(parents=True, exist_ok=True)
+        bounds = mesh_extent(planar_mesh)
+
+        written = _export_field(case_dir, "difference", planar_mesh, diff, bounds, "Difference (1/m)")
+        written += _export_field(case_dir, "relative", planar_mesh, relative, bounds, "Relative to peak planar heating")
+
+        centroid = planar_mesh.geometry.cells.centroid
+        written.append(
+            save(
+                case_dir / "comparison.csv",
+                (centroid[:, 0], centroid[:, 1], planar_heating, axisym_heating, diff, relative),
+                "x,y,planar,axisymmetric,diff,relative",
+            )
+        )
+        return written
+
     def _export():
         if not write.value:
             return mo.md("*Not written yet.*")
         written = [path for name, (_, axi) in CASES.items() for path in _export_case(name, axi)]
+        written += _export_comparison()
         return mo.md("Wrote:\n\n" + "\n".join(f"- `{path.relative_to(FIGURES)}`" for path in written))
 
     _export()
