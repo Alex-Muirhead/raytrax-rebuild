@@ -26,3 +26,8 @@ examples/figures/
 
 # Generated figures
 examples/figures/
+
+# Profiling artifacts
+profile/
+*.trace.json.gz
+*.memory_profile
