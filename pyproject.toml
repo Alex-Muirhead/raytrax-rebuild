@@ -27,6 +27,11 @@ dev = [
     "ruff>=0.15.7",
     "scipy>=1.16.3",
 ]
+# Kernel-level timing for scripts/kernel_profile.py. Kept out of `dev` because it
+# pulls ~30 transitive packages that nothing else needs.
+profiling = [
+    "xprof>=2.23.1",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.26,<0.12.0"]
