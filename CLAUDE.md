@@ -25,6 +25,10 @@ manageable:
   A tet-only mesh pads to 4, a hex mesh to 6. Padded slots hold a zero normal,
   which `crossing` rejects for free, and an EXTERIOR neighbour so a degenerate
   lookup escapes rather than walking somewhere wrong.
+- **`Interactions.kind` is static, and `apply` builds the switch from the kinds
+  present.** Under `vmap` a `lax.switch` evaluates every branch it is given, so
+  a branch no group asks for is not free: a dead DIFFUSE entry costs every ray a
+  Lambertian draw per step. Changing a kind recompiles.
 - **The energy scatter must stay outside the `vmap`.** Inside it, XLA
   materialises a per-ray copy of the accumulator and memory explodes.
 - **`cells.normal` is signed outward per cell; `faces.normal` is the raw one.**

@@ -19,7 +19,7 @@ def emit_from_volume(scene, mesh_geometry):
 
 def uniform_boundary(kind, reflectivity=1.0):
     """One implicit group covering every boundary face."""
-    return interactions.Interactions(kind=jnp.array([kind]), reflectivity=jnp.array([reflectivity]))
+    return interactions.Interactions(kind=(Kind(kind),), reflectivity=jnp.array([reflectivity]))
 
 
 def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None):

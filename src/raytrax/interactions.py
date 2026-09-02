@@ -7,7 +7,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, Float
 
 from raytrax.mesh.boundaries import BoundaryGroups
 from raytrax.paths import Path, RayState
@@ -24,9 +24,13 @@ class Kind(IntEnum):
 
 
 class Interactions(eqx.Module):
-    """Per-boundary-group parameters, indexed by group id."""
+    """Per-boundary-group parameters, indexed by group id.
 
-    kind: Int[Array, " ngroup"]
+    `kind` is static: `apply` reads it at trace time to decide which branches
+    exist at all, so changing one recompiles.
+    """
+
+    kind: tuple[Kind, ...] = eqx.field(static=True)
     reflectivity: Float[Array, " ngroup"]
 
 
@@ -44,7 +48,7 @@ def build(
     for name, value in reflectivity.items():
         rho[groups.index(name)] = value
 
-    return Interactions(kind=jnp.asarray(kind), reflectivity=jnp.asarray(rho))
+    return Interactions(kind=tuple(Kind(value) for value in kind), reflectivity=jnp.asarray(rho))
 
 
 def apply(
@@ -74,4 +78,9 @@ def apply(
         tangent = path.lambertian(key, -normal)
         return path.launch(state.position, tangent, state.travel), 1 - rho, jnp.bool_(False)
 
-    return jax.lax.switch(interactions.kind[group], [escape, absorb, specular, diffuse], state)
+    # Under `vmap` a `switch` evaluates every branch it is given, so keeping a
+    # branch no group asks for costs every ray a Lambertian draw per step.
+    handler = {Kind.ESCAPE: escape, Kind.ABSORB: absorb, Kind.SPECULAR: specular, Kind.DIFFUSE: diffuse}
+    present = sorted(set(interactions.kind))
+    slot = jnp.asarray([present.index(kind) for kind in interactions.kind])
+    return jax.lax.switch(slot[group], [handler[kind] for kind in present], state)

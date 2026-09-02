@@ -199,6 +199,20 @@ ray does not free its lane. It bought nothing that refilling does not, and cost
 a branch and a random draw per step.
 **Instead of:** Keeping it alongside refilling.
 
+## Interactions.kind is static, and apply traces only the kinds present
+
+`yyorxsuz`, 2026-09-02
+
+**Why:** Under `vmap` a `lax.switch` becomes a `select` that evaluates every
+branch, so a table with no diffuse group still made every ray draw a Lambertian
+direction on every step. On `slab_planar` that branch was 43% of device time by
+itself, and its register pressure cost a further 6% in kernels it is not part
+of; dropping it took the step from 2610 to 1065 us. Reading `kind` at trace time
+needs it static, so a table that changes a kind recompiles - which is cheap, and
+compile time fell from 0.78 to 0.32 s because there is less to compile.
+**Instead of:** Leaving the branch and demoting its arithmetic to fp32, which
+would have made the dead work cheaper rather than absent.
+
 ## The energy scatter stays outside the vmap
 
 `5d35544`, 2026-08-22
