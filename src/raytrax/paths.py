@@ -86,8 +86,12 @@ class Path[S: RayState](eqx.Module):
 
     @classmethod
     @abc.abstractmethod
-    def advance(cls, state: S, parameter: Scalar) -> S:
-        """Step the ray forward by `parameter`, accumulating true 3D length."""
+    def advance(cls, state: S, parameter: Scalar) -> tuple[S, Scalar]:
+        """Step the ray forward by `parameter`, returning the new state and the 3D length flown.
+
+        The length is exact. Differencing `travel` across the step recovers the
+        same number by cancellation and loses its low bits once `travel` grows.
+        """
 
 
 class LinearPath(Path[LinearState]):
@@ -120,13 +124,13 @@ class LinearPath(Path[LinearState]):
 
     @classmethod
     @override
-    def advance(cls, state: LinearState, parameter: Scalar) -> LinearState:
+    def advance(cls, state: LinearState, parameter: Scalar) -> tuple[LinearState, Scalar]:
         return LinearState(
             position=state.position + parameter * state.tangent,
             tangent=state.tangent,
             travel=state.travel + parameter,
             speed=state.speed,
-        )
+        ), parameter
 
 
 class AxisymmetricPath(Path[HyperbolicState]):
@@ -206,7 +210,7 @@ class AxisymmetricPath(Path[HyperbolicState]):
 
     @classmethod
     @override
-    def advance(cls, state: HyperbolicState, parameter: Scalar) -> HyperbolicState:
+    def advance(cls, state: HyperbolicState, parameter: Scalar) -> tuple[HyperbolicState, Scalar]:
         forward, backward, first, second = cls._frame(state)
         angle = 1 + parameter
 
@@ -221,4 +225,4 @@ class AxisymmetricPath(Path[HyperbolicState]):
             tangent=jnp.stack([state.tangent[AXIAL], radial]),
             travel=state.travel + flown,
             swirl=state.swirl,
-        )
+        ), flown

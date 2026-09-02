@@ -81,7 +81,8 @@ def direction_meeting_axis_within(rng, ratio):
 def cross(position, direction, normal, offset):
     state = PATH.launch(position, direction, jnp.zeros(()))
     slot, step = PATH.crossing(normal, offset, state)
-    return PATH.advance(state, step), slot
+    moved, _ = PATH.advance(state, step)
+    return moved, slot
 
 
 def sample_case(rng, ratio=None, touch_axis=False):
@@ -171,7 +172,7 @@ class TestState:
             direction /= np.linalg.norm(direction)
             position = jnp.array([rng.uniform(-1, 1), rng.uniform(0.05, 2.0)])
             state = PATH.launch(position, jnp.asarray(direction), jnp.zeros(()))
-            held = PATH.advance(state, jnp.zeros(()))
+            held, _ = PATH.advance(state, jnp.zeros(()))
             assert np.allclose(np.asarray(held.position), np.asarray(position), atol=1e-12)
             assert np.allclose(np.asarray(held.tangent), np.asarray(direction[:2]), atol=1e-12)
 
@@ -184,7 +185,7 @@ class TestState:
                 continue
             state = PATH.launch(jnp.array([ray[0], ray[1]]), jnp.asarray(direction), jnp.zeros(()))
             slot, step = PATH.crossing(normal, offset, state)
-            moved = PATH.advance(state, step)
+            moved, _ = PATH.advance(state, step)
             bounced = PATH.reflect(moved, normal[slot])
             assert float(moved.swirl) == approx(float(state.swirl), rel=1e-12)
             assert float(bounced.swirl) == approx(float(state.swirl), rel=1e-12)

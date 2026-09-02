@@ -105,10 +105,8 @@ def step(
     # A corner or grazing hit can give a small negative parameter.
     parameter = jnp.maximum(parameter, 0.0)
 
-    # The parameter is a distance only for a straight ray, so read the length
-    # flown off `travel`, which every mode accumulates in 3D.
-    moved = path.advance(state, parameter)
-    transmission = jnp.exp(-absorptivity[cell] * (moved.travel - state.travel))
+    moved, flown = path.advance(state, parameter)
+    transmission = jnp.exp(-absorptivity[cell] * flown)
     cell_deposit = energy * (1 - transmission)
     energy = energy * transmission
     state = moved

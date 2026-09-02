@@ -39,8 +39,10 @@ manageable:
 - **A revolved mesh is stored `(x, r)` in columns 0 and 1, with `r >= 0`.**
 - **`AxisymmetricPath` needs geometry passed through `geometry.revolve`.**
   Without it the cells are still Cartesian and the energy is wrong.
-- **The crossing parameter is a distance only for `LinearPath`.** Read the
-  length flown off `travel`, which every mode accumulates in 3D.
+- **The crossing parameter is a distance only for `LinearPath`.** `advance`
+  returns the 3D length flown alongside the new state; use it. Both modes have
+  the length exactly, so differencing `travel` across a step only recovers it by
+  cancellation, losing the low bits once `travel` grows.
 
 ## Conventions
 

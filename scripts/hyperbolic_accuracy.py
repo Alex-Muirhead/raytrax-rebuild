@@ -72,7 +72,8 @@ def direction_approaching(rng, ratio):
 def exit_position(position, direction, normal, offset):
     state = PATH.launch(position, direction, jnp.zeros(()))
     _, step = PATH.crossing(normal, offset, state)
-    return PATH.advance(state, step).position
+    moved, _ = PATH.advance(state, step)
+    return moved.position
 
 
 def measure(ratio, trials, seed):
