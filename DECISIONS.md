@@ -8,6 +8,24 @@ states the argument behind them, which the conventions deliberately keep out of
 docstrings, comments and commit messages. Keep entries to the four lines below;
 anything longer belongs in `docs/`.
 
+## A faint ray is stopped and its remainder deposited where it stands
+
+`Stop a ray at an extinction floor, depositing its remainder`, 2026-09-03
+
+**Why:** A ray only ends at an absorbing or escaping boundary, so a mirrored or
+optically thick problem has no end condition at all: a lane holding 1e-30 of a
+quantum keeps stepping and costs exactly as much as a full one. On the 67k-cell
+cylinder that tail was the whole run - marching 65536 rays to completion took
+8.0 s at any absorption coefficient, because the cost was set by geometry rather
+than by optical depth. A floor at 1e-8 of the quantum takes it to 1.6 s at
+kappa = 1 and 0.45 s at kappa = 5, and the deposited field moves by 1e-9.
+**Instead of:** Russian roulette, which is a stochastic kill needing a weight
+boost to stay unbiased, and which buys nothing that refilling does not; or
+dropping the remainder as the original raytrax did, which silently destroyed it.
+**Cost:** The remainder lands in one cell rather than spread over the cells the
+ray would have reached. That displacement is bounded by the floor, so it is a
+knob and not a fixed error, and depositing it keeps the balance exact.
+
 ## Path methods are classmethods, and a mode holds no state
 
 `Make the Path interface stateless`, 2026-08-24

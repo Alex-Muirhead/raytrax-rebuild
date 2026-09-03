@@ -146,18 +146,26 @@ def march(
     absorptivity: Float[Array, " ncell"],
     max_steps: int = 1000,
     launch: Launch | None = None,
+    extinction: float = 1e-8,
 ) -> tuple[Rays, Deposit]:
     """Walk rays until they terminate or `max_steps` runs out.
 
     `max_steps` is a safety net, not a cost: the batch pays for its longest ray.
     A step costs O(lanes) rather than O(alive), so pass a `Launch` to refill
     dead lanes and keep the batch full.
+
+    `extinction` is the share of the launch quantum below which a ray stops,
+    leaving its remainder in the cell it is in. Zero reaps only exact zeros.
     """
+    floor = extinction * jnp.max(rays.energy)
 
     def body(carry: Carry) -> Carry:
         index, key, launched, rays, deposit = carry
         key, subkey, refill_key = jax.random.split(key, 3)
-        was_alive = rays.alive
+        # An extinct ray takes no step: its remainder is deposited where it
+        # stands, so the balance is the same one a full march would have reached.
+        extinct = rays.alive & (rays.energy <= floor)
+        stepping = rays.alive & ~extinct
 
         crossed = jax.vmap(step, in_axes=(0, None, None, None, None, 0, 0, 0))(
             jax.random.split(subkey, rays.cell.shape[0]),
@@ -173,14 +181,16 @@ def march(
         # The scatter *must* be outside the vmap; inside it, XLA materialises a
         # full per-ray copy of the accumulator and memory use explodes.
         deposit = Deposit(
-            cells=deposit.cells.at[rays.cell].add(jnp.where(was_alive, crossed.cell_deposit, 0.0)),
-            faces=deposit.faces.at[crossed.face].add(jnp.where(was_alive, crossed.face_deposit, 0.0)),
+            cells=deposit.cells.at[rays.cell].add(
+                jnp.where(extinct, rays.energy, jnp.where(stepping, crossed.cell_deposit, 0.0))
+            ),
+            faces=deposit.faces.at[crossed.face].add(jnp.where(stepping, crossed.face_deposit, 0.0)),
         )
         rays = Rays(
-            cell=_keep(was_alive, crossed.cell, rays.cell),
-            state=_keep_tree(was_alive, crossed.state, rays.state),
-            energy=_keep(was_alive, crossed.energy, rays.energy),
-            alive=was_alive & crossed.alive,
+            cell=_keep(stepping, crossed.cell, rays.cell),
+            state=_keep_tree(stepping, crossed.state, rays.state),
+            energy=jnp.where(extinct, 0.0, _keep(stepping, crossed.energy, rays.energy)),
+            alive=stepping & crossed.alive,
         )
 
         if launch is not None:
@@ -214,12 +224,14 @@ def trace(
     lanes: int | None = None,
     max_steps: int = 100_000,
     refill_interval: int = 8,
+    extinction: float = 1e-8,
 ) -> tuple[Rays, Deposit]:
     """Trace `num_rays` rays through `lanes` lanes, refilling as they terminate.
 
     `lanes` trades memory against occupancy, defaulting to tracing everything at
     once. `refill_interval` is worth sweeping on a new problem; sampling costs
-    enough that refilling every step is a loss.
+    enough that refilling every step is a loss. `extinction` is the share of a
+    ray's quantum below which it stops, and is what bounds the tail.
     """
     lanes = min(num_rays, lanes or num_rays)
     key_launch, key_march = jax.random.split(key)
@@ -233,4 +245,14 @@ def trace(
     launch = None
     if lanes < num_rays:
         launch = Launch(sources=sources, budget=jnp.asarray(num_rays), quantum=quantum, interval=refill_interval)
-    return march(key_march, rays, scene, path, interactions, absorptivity, max_steps=max_steps, launch=launch)
+    return march(
+        key_march,
+        rays,
+        scene,
+        path,
+        interactions,
+        absorptivity,
+        max_steps=max_steps,
+        launch=launch,
+        extinction=extinction,
+    )

@@ -22,7 +22,7 @@ def uniform_boundary(kind, reflectivity=1.0):
     return interactions.Interactions(kind=(Kind(kind),), reflectivity=jnp.array([reflectivity]))
 
 
-def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None):
+def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None, **march_kwargs):
     path = path or LinearPath()
     rays_key, march_key = jax.random.split(jax.random.key(seed))
     state, cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
@@ -35,7 +35,7 @@ def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_step
         alive=jnp.ones(num_rays, dtype=bool),
     )
     absorptivity = jnp.full(scene.num_cells, kappa)
-    return transport.march(march_key, rays, scene, path, kinds_table, absorptivity, max_steps=max_steps)
+    return transport.march(march_key, rays, scene, path, kinds_table, absorptivity, max_steps=max_steps, **march_kwargs)
 
 
 class TestSampling:
@@ -108,6 +108,51 @@ class TestEnergyConservation:
         assert float(sealed.faces.sum()) > 0
         assert float(open_.faces.sum()) == approx(0.0)
         assert float(open_.cells.sum()) == approx(float(sealed.cells.sum()), rel=1e-6)
+
+
+class TestExtinction:
+    """Stopping a faint ray is a bookkeeping move, not a physical one: it must
+    move energy forward in time without moving it in space."""
+
+    def mirrored_box(self):
+        """A box a ray can never leave, so only extinction ever ends the march."""
+        blocks, vertices = brick((3, 3, 3))
+        _, mesh_geometry, scene = make(blocks, vertices)
+        return mesh_geometry, scene, uniform_boundary(Kind.SPECULAR)
+
+    def test_the_deposited_total_is_the_emitted_total(self):
+        """The remainder is deposited rather than dropped, so the balance closes
+        to rounding and not to the size of the floor."""
+        mesh_geometry, scene, mirror = self.mirrored_box()
+        source = emit_from_volume(scene, mesh_geometry)
+        rays, deposit = run(scene, source, mirror, kappa=2.0, max_steps=2000, extinction=1e-6)
+
+        assert not bool(jnp.any(rays.alive)), "extinction never ended the march"
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-12)
+
+    def test_a_coarser_floor_does_not_move_the_answer(self):
+        """Two floors six decades apart must agree far more closely than the
+        deposit varies across the mesh, or the truncation is displacing energy."""
+        mesh_geometry, scene, mirror = self.mirrored_box()
+        source = emit_from_volume(scene, mesh_geometry)
+        loose, fine = run(scene, source, mirror, kappa=2.0, max_steps=4000, extinction=1e-12)
+        _, coarse = run(scene, source, mirror, kappa=2.0, max_steps=4000, extinction=1e-6)
+
+        assert not bool(jnp.any(loose.alive)), "the finer floor ran out of steps"
+        drift = float(jnp.abs(coarse.cells - fine.cells).max() / fine.cells.max())
+        assert drift < 1e-5
+
+    def test_the_floor_is_what_ends_a_mirrored_march(self):
+        """Without it the same box never terminates, which is the cost the floor
+        buys back. The step cap is short of where `exp(-kappa s)` underflows,
+        since reaching zero would end the march on its own."""
+        mesh_geometry, scene, mirror = self.mirrored_box()
+        source = emit_from_volume(scene, mesh_geometry)
+        forever, _ = run(scene, source, mirror, kappa=1.0, max_steps=300, extinction=0.0)
+        stopped, _ = run(scene, source, mirror, kappa=1.0, max_steps=300)
+
+        assert bool(jnp.all(forever.alive))
+        assert not bool(jnp.any(stopped.alive))
 
 
 class TestReflection:

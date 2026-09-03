@@ -5,7 +5,7 @@
 
 Reports compile time and run time separately, because `march` carries no
 `static_argnums` and takes its statics implicitly, so every distinct
-(case, lanes, max_steps, refill_interval) is a fresh compile.
+(case, lanes, max_steps, extinction, refill_interval) is a fresh compile.
 
 Timing follows the JAX guide: warm up once, then block on the whole returned
 pytree, not one array, or the numbers measure async dispatch instead of compute.
@@ -111,13 +111,15 @@ def peak_mib() -> float | None:
     return stats["peak_bytes_in_use"] / 2**20
 
 
-def measure(case: Case, lanes: int, max_steps: int, repeats: int, seed: int) -> dict[str, Any]:
+def measure(case: Case, lanes: int, max_steps: int, repeats: int, seed: int, extinction: float) -> dict[str, Any]:
     """Compile once, then time `repeats` marches, blocking on the whole result."""
     rays = make_rays(case, lanes, seed)
     key = jax.random.key(seed + 1)
 
     def march():
-        return transport.march(key, rays, case.scene, case.path, case.table, case.absorptivity, max_steps=max_steps)
+        return transport.march(
+            key, rays, case.scene, case.path, case.table, case.absorptivity, max_steps=max_steps, extinction=extinction
+        )
 
     start = time.perf_counter()
     final, deposit = jax.block_until_ready(march())
@@ -134,6 +136,7 @@ def measure(case: Case, lanes: int, max_steps: int, repeats: int, seed: int) -> 
     return {
         "lanes": lanes,
         "max_steps": max_steps,
+        "extinction": extinction,
         "cells": int(case.scene.num_cells),
         "faces": int(case.scene.num_faces),
         "slots": int(case.scene.cells.normal.shape[1]),
@@ -198,6 +201,7 @@ if __name__ == "__main__":
     parser.add_argument("--to-power", type=int, default=22)
     parser.add_argument("--max-steps", type=int, default=400)
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--extinction", type=float, default=1e-8, help="share of a quantum below which a ray stops")
     parser.add_argument("--kappa", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--x32", action="store_true", help="undo the package's x64 default, to price fp64")
@@ -220,7 +224,7 @@ if __name__ == "__main__":
     records = []
     for count in lanes:
         try:
-            record = measure(case, count, args.max_steps, args.repeats, args.seed)
+            record = measure(case, count, args.max_steps, args.repeats, args.seed, args.extinction)
         except Exception as error:  # noqa: BLE001 - an OOM ends the ladder, not the run
             print(f"{count:>9}  FAILED  {type(error).__name__}: {str(error).splitlines()[0][:90]}")
             break
