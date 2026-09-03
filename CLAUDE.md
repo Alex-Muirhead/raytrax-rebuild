@@ -29,6 +29,10 @@ manageable:
   present.** Under `vmap` a `lax.switch` evaluates every branch it is given, so
   a branch no group asks for is not free: a dead DIFFUSE entry costs every ray a
   Lambertian draw per step. Changing a kind recompiles.
+- **`random.simplex` sorts with a comparator network, not `jnp.sort`.** Under
+  `vmap`, `jnp.sort` becomes a segmented radix sort over the whole batch: for the
+  one to three elements a simplex draw needs, that costs about 2000 times a
+  network of at most three comparisons. The network returns the same doubles.
 - **The energy scatter must stay outside the `vmap`.** Inside it, XLA
   materialises a per-ray copy of the accumulator and memory explodes.
 - **`cells.normal` is signed outward per cell; `faces.normal` is the raw one.**

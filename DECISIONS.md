@@ -213,6 +213,22 @@ compile time fell from 0.78 to 0.32 s because there is less to compile.
 **Instead of:** Leaving the branch and demoting its arithmetic to fp32, which
 would have made the dead work cheaper rather than absent.
 
+## Simplex spacings are sorted by a comparator network
+
+`otmszrms`, 2026-09-03
+
+**Why:** `jnp.sort` under `vmap` lowers to a cub segmented radix sort over the
+whole batch, at 206 registers per thread and 9.4% occupancy. It was 90.7% of
+every source sampling, which made one full-batch sample cost 2.0 s, or five
+times an entire 400-step march, and `_refill` pays it every few steps. A network
+of at most three comparisons returns the same doubles about 2000 times faster,
+so `transport.trace` went from 3.6 to 427 thousand rays per second at four times
+the lane count.
+**Instead of:** Normalised exponentials, which are the same distribution
+(docs/simplex.typ) and the same speed, but change the random stream and lose the
+telescoping sum to exactly one. The original raytrax already sorted this way; the
+rebuild lost it and this restores it.
+
 ## The energy scatter stays outside the vmap
 
 `5d35544`, 2026-08-22
