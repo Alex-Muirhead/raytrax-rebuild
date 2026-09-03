@@ -8,6 +8,37 @@ states the argument behind them, which the conventions deliberately keep out of
 docstrings, comments and commit messages. Keep entries to the four lines below;
 anything longer belongs in `docs/`.
 
+## The lane count is measured off the compiled march, not configured per GPU
+
+`zlumtxks`, 2026-09-03
+
+**Why:** Everything a march holds is linear in lanes, so `lanes` defaulting to
+the ray count made memory scale with a number the caller thinks of as accuracy:
+`examples/reentry.py` ran at one million rays and died at four. XLA already
+knows the answer, so `lane_capacity` compiles the march at two probe widths and
+differences the memory analysis. On the re-entry case that prices a lane at 349
+bytes and predicts the peak to within a percent at a million lanes.
+**Instead of:** A per-GPU constant, as `examples/convergence.py` carried, which
+is a number nobody can derive and everybody has to maintain; or counting the
+bytes by hand, which the XLA temporaries dominate and a kernel change invalidates.
+**Cost:** Two extra compiles per estimate, so a sweep hoists it out of the loop.
+The pool XLA reports is a share of the whole card rather than what is free on
+it, so an estimate that still overruns is halved and marched again.
+
+## What escapes is banked as it leaves, not read off the lane it died in
+
+`zlumtxks`, 2026-09-03
+
+**Why:** An escaping ray deposits nowhere, so its energy used to be recovered at
+the end as whatever the dead lanes still carried. Refilling hands that lane to
+another ray and overwrites it: on the re-entry case, whose outflow escapes, the
+budget closed to 0.62 instead of 1 the moment the batch was capped. Banking it
+in `Deposit.escaped` as the ray terminates is what makes the balance independent
+of the lane count.
+**Instead of:** Making ESCAPE deposit on its exit face like ABSORB, which
+closes the balance too but loses the distinction between energy the boundary
+took and energy that left through it.
+
 ## A faint ray is stopped and its remainder deposited where it stands
 
 `Stop a ray at an extinction floor, depositing its remainder`, 2026-09-03

@@ -148,10 +148,10 @@ def _(geom, kappa, mesh, num_rays, scene, source, table, trace_path):
 
 @app.cell(hide_code=True)
 def _(axisymmetric, deposit, final, initial, mesh, source):
-    # A ray absorbed at a wall has already handed over its energy, so whatever a
-    # dead ray still carries left the domain.
-    _escaped = float(jnp.where(final.alive, 0.0, final.energy).sum())
-    _flight = float(jnp.where(final.alive, final.energy, 0.0).sum())
+    # A terminating ray is emptied into the deposit, so a lane still holding
+    # anything is one the step cap caught part-way.
+    _escaped = float(deposit.escaped)
+    _flight = float(final.energy.sum())
     _total = float(deposit.cells.sum() + deposit.faces.sum()) + _escaped + _flight
 
     # A ray only reaches r = 0 with no swirl at all, so anything landing on the

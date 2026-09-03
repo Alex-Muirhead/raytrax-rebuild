@@ -36,10 +36,6 @@ with app.setup:
     RAY_COUNTS = (1_000, 10_000, 100_000, 1_000_000, 10_000_000)
     NUM_SEEDS = 5
 
-    # Rays held in memory at once. Past this `trace` refills dead lanes instead
-    # of widening the batch, so the largest ray count costs no more memory.
-    LANES = 1_000_000
-
     class Case(NamedTuple):
         """One case's mesh and everything a trace needs except the rays."""
 
@@ -50,6 +46,7 @@ with app.setup:
         table: Interactions
         source: Sources
         reference: float
+        lanes: int | None
 
 
 @app.cell(hide_code=True)
@@ -135,7 +132,18 @@ def prepare(name):
     source = sources.build(jnp.zeros(mesh.topology.num_cells), geom.faces.area[hot], hot)
 
     reference = float(source.total) / geom.cells.volume.sum()
-    return Case(mesh, geom, scene, trace_path, table, source, reference)
+    # Priced once per case rather than once per trace: the estimate costs two
+    # compiles, and only the shape of the absorptivity reaches them.
+    lanes = transport.lane_capacity(
+        jax.random.key(0),
+        scene,
+        trace_path,
+        table,
+        jnp.ones(mesh.topology.num_cells),
+        source,
+        max_steps=2_000,
+    )
+    return Case(mesh, geom, scene, trace_path, table, source, reference, lanes)
 
 
 @app.function
@@ -156,11 +164,11 @@ def run(case, absorptivity, rays, key):
         jnp.full(case.mesh.topology.num_cells, absorptivity),
         case.source,
         num_rays=rays,
-        lanes=min(rays, LANES),
+        lanes=case.lanes,
         max_steps=2_000,
     )
-    escaped = float(jnp.where(final.alive, 0.0, final.energy).sum())
-    flight = float(jnp.where(final.alive, final.energy, 0.0).sum())
+    escaped = float(deposit.escaped)
+    flight = float(final.energy.sum())
     spent = float(deposit.cells.sum() + deposit.faces.sum()) + escaped + flight
 
     heating = np.asarray(deposit.cells) / case.geom.cells.volume

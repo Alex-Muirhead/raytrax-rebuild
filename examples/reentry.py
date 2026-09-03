@@ -443,10 +443,10 @@ def _():
 def _(deposit, final, flux, group_faces, num_rays, source):
     def _budget():
         emitted = float(source.total)
-        # A ray absorbed at a boundary handed its energy over there, so whatever
-        # a dead ray still carries went out through the outflow.
-        escaped = float(jnp.where(final.alive, 0.0, final.energy).sum())
-        in_flight = float(jnp.where(final.alive, final.energy, 0.0).sum())
+        # A terminating ray is emptied into the deposit, so a lane still holding
+        # anything is one the step cap caught part-way.
+        escaped = float(deposit.escaped)
+        in_flight = float(final.energy.sum())
         faces = np.asarray(deposit.faces)
         gas = float(deposit.cells.sum())
         total = gas + float(deposit.faces.sum()) + escaped + in_flight

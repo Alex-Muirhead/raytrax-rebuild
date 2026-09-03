@@ -31,9 +31,11 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   launched.
 - **Every launched ray carries the same quantum, `sources.total / num_rays`.**
   The deposit map is then in source power units whatever the lane count, and
-  refilling a dead lane mid-march cannot bias it. All rays must account for
-  their quantum via deposition either in cells or boundaries the time they
-  terminate.
+  refilling a dead lane mid-march cannot bias it. A terminating ray must be
+  emptied into the `Deposit` there and then, into cells, faces or `escaped`:
+  its lane is about to be handed to another ray, so anything left in it is
+  gone. `cells + faces + escaped` plus what the step cap caught still in flight
+  is therefore the launched total, at any lane count.
 - **Cell and face emission are in the same units, so one draw over
   `Sources.cumulative` picks between them.** Volume emission is isotropic;
   surface emission is cosine-weighted about the inward normal.
@@ -90,3 +92,11 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   network of at most three comparisons. The network returns the same doubles.
 - **The energy scatter must stay outside the `vmap`.** Inside it, XLA
   materialises a per-ray copy of the accumulator and memory explodes.
+- **The lane count is what bounds memory, and `trace` sets it from the device.**
+  Everything a march holds is linear in lanes, so a batch as wide as the ray
+  count is unbounded. `lane_capacity` compiles the march at two probe widths
+  and reads XLA's own memory analysis of the result, which is what makes the
+  price of a lane a measurement rather than a guess.
+- **The first batch is drawn inside the same `jit` as the march.** Drawn
+  outside it the sampling is a second executable, and its buffers cannot be
+  reused as march scratch; on the re-entry case that cost a fifth of the peak.

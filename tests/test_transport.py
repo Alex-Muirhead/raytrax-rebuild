@@ -108,6 +108,9 @@ class TestEnergyConservation:
         assert float(sealed.faces.sum()) > 0
         assert float(open_.faces.sum()) == approx(0.0)
         assert float(open_.cells.sum()) == approx(float(sealed.cells.sum()), rel=1e-6)
+        # Same rays reaching the same faces, so what one box absorbs there is
+        # exactly what the other lets out.
+        assert float(open_.escaped) == approx(float(sealed.faces.sum()), rel=1e-12)
 
 
 class TestExtinction:
@@ -235,6 +238,49 @@ class TestRefill:
             lanes=lanes,
             refill_interval=interval,
         )
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
+
+    def test_what_escaped_survives_the_lane_being_reused(self):
+        """An escaping ray deposits nothing anywhere, so the only record of it is
+        the `escaped` total; the lane it dies in is handed straight to the next
+        ray and would take that record with it."""
+        blocks, vertices = brick((3, 3, 3))
+        _, mesh_geometry, scene = make(blocks, vertices)
+        source = sources.build(mesh_geometry.cells.volume)
+
+        rays, deposit = transport.trace(
+            jax.random.key(0),
+            scene,
+            LinearPath(),
+            uniform_boundary(Kind.ESCAPE),
+            jnp.full(scene.num_cells, 1.0),
+            source,
+            num_rays=20_000,
+            lanes=2_000,
+        )
+        assert float(deposit.escaped) > 0, "nothing escaped, so the budget closing proves nothing"
+        accounted = float(deposit.cells.sum() + deposit.faces.sum() + deposit.escaped + rays.energy.sum())
+        assert accounted == approx(float(source.total), rel=1e-6)
+
+
+class TestLaneCapacity:
+    """The estimate reaches through what equinox and XLA return, which nothing
+    else in the suite covers and no type checker can."""
+
+    def case(self):
+        blocks, vertices = brick((3, 3, 3))
+        _, mesh_geometry, scene = make(blocks, vertices)
+        return scene, sources.build(mesh_geometry.cells.volume)
+
+    def test_the_estimate_is_a_width_a_trace_can_be_run_at(self):
+        scene, source = self.case()
+        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
+        lanes = transport.lane_capacity(*args, source, max_steps=400)
+        if lanes is None:
+            pytest.skip("the device does not report its memory")
+
+        assert lanes >= transport.MIN_LANES
+        _, deposit = transport.trace(*args, source, num_rays=20_000, lanes=lanes, max_steps=400)
         assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
 
 
