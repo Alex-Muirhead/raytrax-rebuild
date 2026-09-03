@@ -3,8 +3,8 @@
 Why the design is the way it is, and what each choice was chosen over. Newest
 first.
 
-`CLAUDE.md` states the invariants a reader must not violate. This file states
-the argument behind them, which the conventions deliberately keep out of
+`ARCHITECTURE.md` states the invariants a reader must not violate. This file
+states the argument behind them, which the conventions deliberately keep out of
 docstrings, comments and commit messages. Keep entries to the four lines below;
 anything longer belongs in `docs/`.
 
@@ -113,7 +113,7 @@ which silently eats the genuine exit.
 where the host-side geometry already lives.
 **Instead of:** A mode flag threaded through the host/device boundary.
 **Cost:** The caller can forget it and get Cartesian cells with a revolved path,
-so `CLAUDE.md` states the pairing.
+so `ARCHITECTURE.md` states the pairing.
 
 ## The axis convention is hardcoded to columns 0 and 1
 
@@ -139,20 +139,13 @@ with `|tangent|`, and which the swirl cannot survive at all.
 
 `Run in float64`, 2026-08-24
 
-**Why:** Physics, not graphics. The axisymmetric crossing spends float32's seven
-digits entirely on a ray passing close to the axis, where the cliff would move
-from one ray in 10^9 to roughly one in 5000.
+**Why:** Physics, not graphics. The output is compared against a measurement,
+and float32's seven digits are not enough to stand behind over a long march. The
+axisymmetric crossing is only where that shows first: a ray passing close to the
+axis spends all seven, moving the cliff from one ray in 10^9 to about one in
+5000.
 **Cost:** Set as an import side effect in `raytrax/__init__.py`, since it must
 happen before any array is made.
-
-## Prose conventions are written into CLAUDE.md
-
-`81edf4b`, 2026-08-23
-
-**Why:** Docstrings and commit messages had drifted into multi-paragraph design
-arguments over several sessions. Stating the rule once was not enough; it needed
-to be checked into the repo where it is re-read.
-**Instead of:** Relying on a general instruction to be concise.
 
 ## Path is genuinely abstract
 
