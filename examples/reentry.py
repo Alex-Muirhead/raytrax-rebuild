@@ -455,7 +455,7 @@ def _(deposit, final, flux, group_faces, num_rays, source):
         def row(name, value):
             return f"| {name} | {value / 1e6:,.1f} MW | {value / emitted:.4f} |"
 
-        # A ray only reaches r = 0 with no swirl at all, so anything landing on
+        # A ray only reaches r = 0 with no angular momentum at all, so anything landing on
         # the axis group is a leak through the symmetry axis.
         return mo.md(f"""
         | energy | | fraction |

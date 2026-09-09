@@ -37,9 +37,10 @@ class LinearState(RayState):
 
 
 class HyperbolicState(RayState):
-    """Adds the swirl `r |p x e|`, conserved along the ray and through a bounce."""
+    """Adds the angular momentum about the axis, conserved along the ray and through a bounce."""
 
-    swirl: Float[Array, "..."]
+    # Specific, so a radius times an azimuthal speed rather than a true moment.
+    angular_momentum: Float[Array, "..."]
 
 
 class Path[S: RayState](eqx.Module):
@@ -75,7 +76,7 @@ class Path[S: RayState](eqx.Module):
     def reflect(cls, state: S, normal: Vector) -> S:
         """Mirror the tangent about an outward unit normal."""
         # A wall leaves the radius alone and preserves `|tangent|`, so both the
-        # speed and the swirl survive untouched; only the tangent moves.
+        # speed and the angular momentum survive untouched; only the tangent moves.
         tangent = state.tangent - 2 * (state.tangent @ normal) * normal
         return eqx.tree_at(lambda leaf: leaf.tangent, state, tangent)
 
@@ -156,52 +157,69 @@ class AxisymmetricPath(Path[HyperbolicState]):
     @classmethod
     @override
     def launch(cls, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> HyperbolicState:
-        # The swirl is the azimuthal component times the radius. Reading it off
-        # the 3D draw keeps full precision for a ray that nearly meets the axis,
-        # where recovering it from `1 - |tangent|^2` would cancel away.
-        swirl = position[RADIAL] * jnp.abs(direction[2])
-        return HyperbolicState(position, direction[:2], travel, swirl)
+        # Radius times azimuthal speed. Reading it off the 3D draw keeps full
+        # precision for a ray that nearly meets the axis, where recovering it
+        # from `1 - |tangent|^2` would cancel away.
+        angular_momentum = position[RADIAL] * jnp.abs(direction[2])
+        return HyperbolicState(position, direction[:2], travel, angular_momentum)
 
     @classmethod
-    def _frame(cls, state: HyperbolicState) -> tuple[Vector, Vector, Scalar, Scalar]:
-        """Asymptote directions and their coefficients, anchored at the ray.
+    def frame(cls, state: HyperbolicState) -> tuple[Vector, Vector, Scalar, Scalar]:
+        """The two asymptote directions, and how far along each the ray currently sits.
 
-        The parametrisation is fixed so the ray sits at `w = 1`; a frame pinned
-        to the hyperbola's centre instead loses the position to cancellation
-        whenever that centre is far away.
+        The parametrisation is anchored so the ray sits at `v = 1`; a frame
+        pinned to the hyperbola's centre instead loses the position to
+        cancellation whenever that centre is far away.
         """
-        axial, radial = state.tangent[AXIAL], state.tangent[RADIAL]
-        # A sum, where `1 - axial^2` would cancel for a near-axial ray.
-        reduced = radial**2 + (state.swirl / state.position[RADIAL]) ** 2
-        rate = jnp.sqrt(reduced)
+        axial_speed, radial_speed = state.tangent[AXIAL], state.tangent[RADIAL]
+        # The central-force split: radial motion plus the centrifugal share.
+        # A sum, where `1 - axial_speed^2` would cancel for a near-axial ray.
+        transverse_squared = radial_speed**2 + (state.angular_momentum / state.position[RADIAL]) ** 2
+        transverse_speed = jnp.sqrt(transverse_squared)
+        eccentricity = 1 / transverse_speed
 
-        scale = (state.swirl / reduced) ** 2
-        near = state.position[RADIAL] * (rate + jnp.abs(radial)) / reduced
-        far = scale / near
-        # Pair them: the sum never cancels and the product is exact, so the
-        # small coefficient keeps full relative precision.
-        first, second = jnp.where(radial >= 0, near, far), jnp.where(radial >= 0, far, near)
-        return jnp.stack([axial, rate]), jnp.stack([-axial, rate]), first, second
+        forward = jnp.stack([axial_speed, transverse_speed])
+        backward = jnp.stack([-axial_speed, transverse_speed])
+        return forward, backward, *cls.asymptote_coordinates(state, eccentricity)
+
+    @classmethod
+    def asymptote_coordinates(cls, state: HyperbolicState, eccentricity: Scalar) -> tuple[Scalar, Scalar]:
+        """How far along the outgoing and incoming asymptotes the ray sits.
+
+        Both are built as a magnitude-ordered pair first. Only the sum of like
+        signs survives a ray that nearly meets the axis, so the larger comes
+        from that sum and the smaller from the product the two always make.
+        """
+        radial_speed, radius = state.tangent[RADIAL], state.position[RADIAL]
+        linear_eccentricity = state.angular_momentum * eccentricity**2
+        larger = radius * eccentricity * (1 + jnp.abs(radial_speed) * eccentricity)
+        smaller = linear_eccentricity**2 / larger
+
+        # A receding ray is further along its outgoing asymptote than its incoming one.
+        receding = radial_speed >= 0
+        return jnp.where(receding, larger, smaller), jnp.where(receding, smaller, larger)
 
     @classmethod
     @override
     def crossing(cls, normal: Normals, offset: Offsets, state: HyperbolicState) -> tuple[Index, Scalar]:
-        forward, backward, first, second = cls._frame(state)
+        forward, backward, forward_length, backward_length = cls.frame(state)
 
-        along = first * (normal @ forward)
-        against = second * (normal @ backward)
+        # How far the face closes per unit travelled along each asymptote.
+        forward_reach = forward_length * (normal @ forward)
+        backward_reach = backward_length * (normal @ backward)
         distance = normal @ state.position - offset
 
-        # (w - 1) solves this, so the ray's own position anchors the quadratic.
-        linear = 2 * distance + along - against
-        discriminant = linear**2 - 8 * distance * along
+        # Solved in `v - 1`, so the ray's own position anchors the quadratic.
+        linear = 2 * distance + forward_reach - backward_reach
+        discriminant = linear**2 - 8 * distance * forward_reach
         root = jnp.sqrt(jnp.where(discriminant > 0, discriminant, jnp.nan))
-        pair = -(linear + jnp.where(linear >= 0, 1.0, -1.0) * root) / 2
+        # The root taken away from the cancelling side; both steps divide into it.
+        stable = -(linear + jnp.where(linear >= 0, 1.0, -1.0) * root) / 2
 
-        step = jnp.stack([pair / along, 2 * distance / pair])
-        # Outgoing: the sign of dg/dw. A convex trace can leave through the face
+        step = jnp.stack([stable / forward_reach, 2 * distance / stable])
+        # Outgoing: the sign of dg/dv. A convex trace can leave through the face
         # it entered by, so the derivative and not the ordering picks the root.
-        outgoing = (1 + step) ** 2 * along > against
+        outgoing = (1 + step) ** 2 * forward_reach > backward_reach
         step = jnp.where((step > 0) & outgoing & jnp.isfinite(step), step, jnp.nan)
 
         best = jnp.nanmin(step, axis=0)
@@ -211,18 +229,23 @@ class AxisymmetricPath(Path[HyperbolicState]):
     @classmethod
     @override
     def advance(cls, state: HyperbolicState, parameter: Scalar) -> tuple[HyperbolicState, Scalar]:
-        forward, backward, first, second = cls._frame(state)
-        angle = 1 + parameter
+        forward, backward, forward_length, backward_length = cls.frame(state)
+        # The anchored parameter `v = exp(dtheta)` for `dtheta` the hyperbolic
+        # angle swept, so `parameter` is its `expm1`. The forward coordinate
+        # stretches by it while the backward one shrinks by the same factor, so
+        # their product, and with it the hyperbola, is untouched.
+        stretch = 1 + parameter
+        grown, shrunk = forward_length * stretch, backward_length / stretch
 
-        moved = parameter / 2 * (first * forward - second * backward / angle)
-        flown = ((first * angle - second / angle) - (first - second)) / 2
-        rate = forward[RADIAL]
-        radial = rate * (first - second / angle**2) / (first + second / angle**2)
+        moved = parameter / 2 * (forward_length * forward - backward_length * backward / stretch)
+        flown = ((grown - shrunk) - (forward_length - backward_length)) / 2
+        transverse_speed = forward[RADIAL]
+        radial_speed = transverse_speed * (grown - shrunk) / (grown + shrunk)
 
         return HyperbolicState(
             position=state.position + moved,
             # The axial component is untouched by the march; only a wall moves it.
-            tangent=jnp.stack([state.tangent[AXIAL], radial]),
+            tangent=jnp.stack([state.tangent[AXIAL], radial_speed]),
             travel=state.travel + flown,
-            swirl=state.swirl,
+            angular_momentum=state.angular_momentum,
         ), flown

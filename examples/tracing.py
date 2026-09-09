@@ -154,7 +154,7 @@ def _(axisymmetric, deposit, final, initial, mesh, source):
     _flight = float(final.energy.sum())
     _total = float(deposit.cells.sum() + deposit.faces.sum()) + _escaped + _flight
 
-    # A ray only reaches r = 0 with no swirl at all, so anything landing on the
+    # A ray only reaches r = 0 with no angular momentum at all, so anything landing on the
     # axis group is a leak through the symmetry plane.
     _axis = ""
     if axisymmetric and "axis" in mesh.groups.names:

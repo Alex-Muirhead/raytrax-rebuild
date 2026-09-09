@@ -54,7 +54,7 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   returns the 3D length flown alongside the new state; use it. Both modes have
   the length exactly, so differencing `travel` across a step only recovers it by
   cancellation, losing the low bits once `travel` grows.
-- **The swirl `r |d_z|` is conserved along a ray and through a bounce, and is
+- **The angular momentum `r |q_z|` is conserved along a ray and through a bounce, and is
   carried in the state rather than recomputed.** A wall leaves `r` alone and
   mirroring preserves `|tangent|`. Recovering it from `1 - |tangent|^2` cancels
   once the closest approach falls below `sqrt(eps)` of the radius.

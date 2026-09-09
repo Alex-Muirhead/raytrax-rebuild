@@ -132,11 +132,11 @@ near-axial crossing from ~20% silently wrong into machine precision.
 derivation suggests and what the first attempt did.
 **Cost:** The frame is rebuilt per cell, six flops, rather than stored.
 
-## The swirl is carried in the ray state, never recomputed
+## The angular momentum is carried in the ray state, never recomputed
 
 `Add AxisymmetricPath`, 2026-08-24
 
-**Why:** It is exact at launch (`L = r |d_z|`) and conserved thereafter, since a
+**Why:** It is exact at launch (`r |q_z|`, one product) and conserved thereafter, since a
 wall leaves `r` alone and mirroring preserves `|tangent|`. Recovering it from
 `1 - |tangent|^2` cancels once the closest approach falls below `sqrt(eps)` of
 the radius, which reintroduces a cliff the rest of the design removes.
@@ -178,11 +178,11 @@ the reader, which the notes list as optional.
 `Build ray state through Path.launch`, 2026-08-24
 
 **Why:** Each mode conserves something different along a ray: the straight mode
-its speed, the revolved mode its swirl. Building both in one hook means the
+its speed, the revolved mode its angular momentum. Building both in one hook means the
 direction is reduced in exactly one place, and the azimuthal component the
-reduction discards is still available where the swirl needs it.
+reduction discards is still available where the angular momentum needs it.
 **Instead of:** Recomputing per call, which is what `LinearPath.crossing` did
-with `|tangent|`, and which the swirl cannot survive at all.
+with `|tangent|`, and which the angular momentum cannot survive at all.
 
 ## The project runs in float64
 
@@ -220,7 +220,7 @@ run.
 **Why:** Directions stay genuine 3D draws, so `travel` is the true 3D path
 length and `exp(-kappa s)` needs no correction in any mode. The deficit from
 unit length carries the component that is not stored, which is exactly what the
-axisymmetric mode later needed for the swirl.
+axisymmetric mode later needed for the angular momentum.
 **Instead of:** Renormalising the direction in plane and correcting the distance
 by a cosine factor, as the original specification described.
 

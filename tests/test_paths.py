@@ -68,13 +68,13 @@ def bounded_cell(rng, inside, num_faces=4, touch_axis=False):
 def direction_meeting_axis_within(rng, ratio):
     """A 3D direction whose closest approach to the axis is `ratio` times the radius.
 
-    The approach is `|sin(phi)|` for `phi` the azimuth of the transverse part,
-    which is what makes the swirl small.
+    The approach is `|sin(psi)|` for `psi` the transverse impact angle, which is
+    what makes the angular momentum small.
     """
     axial = rng.uniform(-0.9, 0.9)
     transverse = np.sqrt(1 - axial**2)
-    phi = np.arcsin(np.clip(ratio, 0.0, 1.0)) * rng.choice([-1, 1])
-    return np.array([axial, rng.choice([-1, 1]) * transverse * np.cos(phi), transverse * np.sin(phi)])
+    psi = np.arcsin(np.clip(ratio, 0.0, 1.0)) * rng.choice([-1, 1])
+    return np.array([axial, rng.choice([-1, 1]) * transverse * np.cos(psi), transverse * np.sin(psi)])
 
 
 @jax.jit
@@ -117,7 +117,7 @@ class TestCrossing:
 
     @pytest.mark.parametrize("ratio", [1e-2, 1e-4, 1e-8, 1e-12, 1e-16])
     def test_holds_up_for_rays_that_nearly_meet_the_axis(self, ratio):
-        """The swirl is carried, not recovered from `1 - |tangent|^2`.
+        """The angular momentum is carried, not recovered from `1 - |tangent|^2`.
 
         Recovering it cancels once the closest approach falls below sqrt(eps) of
         the radius, which is where a centre-anchored frame loses the crossing
@@ -176,8 +176,8 @@ class TestState:
             assert np.allclose(np.asarray(held.position), np.asarray(position), atol=1e-12)
             assert np.allclose(np.asarray(held.tangent), np.asarray(direction[:2]), atol=1e-12)
 
-    def test_swirl_survives_a_crossing_and_a_bounce(self):
-        """The swirl is the conserved quantity the whole formulation rests on."""
+    def test_angular_momentum_survives_a_crossing_and_a_bounce(self):
+        """The angular momentum is the conserved quantity the whole formulation rests on."""
         rng = np.random.default_rng(11)
         for _ in range(200):
             ray, direction, normal, offset, want = sample_case(rng)
@@ -187,8 +187,8 @@ class TestState:
             slot, step = PATH.crossing(normal, offset, state)
             moved, _ = PATH.advance(state, step)
             bounced = PATH.reflect(moved, normal[slot])
-            assert float(moved.swirl) == approx(float(state.swirl), rel=1e-12)
-            assert float(bounced.swirl) == approx(float(state.swirl), rel=1e-12)
+            assert float(moved.angular_momentum) == approx(float(state.angular_momentum), rel=1e-12)
+            assert float(bounced.angular_momentum) == approx(float(state.angular_momentum), rel=1e-12)
             # A bounce leaves the radius alone, so |tangent| cannot move either.
             before = float(jnp.linalg.vector_norm(moved.tangent))
             assert float(jnp.linalg.vector_norm(bounced.tangent)) == approx(before, rel=1e-12)

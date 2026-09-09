@@ -378,7 +378,7 @@ class TestAxisymmetric:
         assert not bool(jnp.any(rays.alive)), "rays ran out of steps"
 
     def test_nothing_escapes_through_the_axis(self):
-        """A ray only reaches r = 0 with no swirl at all, which is measure zero.
+        """A ray only reaches r = 0 with no angular momentum at all, which is measure zero.
         Any deposit on the axis group is a leak through the symmetry plane."""
         mesh_geometry, groups, scene = self.revolved()
         table = uniform_boundary(Kind.ABSORB)
