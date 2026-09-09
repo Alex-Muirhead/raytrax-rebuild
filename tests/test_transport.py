@@ -351,7 +351,7 @@ class TestAxisymmetric:
 
     def test_sampled_points_fill_the_ring_not_the_slice(self):
         """Uniform in the ring means the density carries a factor r, so the mean
-        radius exceeds the meridional one. For a slab from a to b that is
+        radius exceeds the unweighted one. For a slab from a to b that is
         (integral r^2)/(integral r), which is 14/9 over [1, 2]."""
         vertices = np.array([[0, 1], [1, 1], [1, 2], [0, 2]], dtype=float)
         mesh_topology = topology.build([("quad", np.arange(4)[None, :])])

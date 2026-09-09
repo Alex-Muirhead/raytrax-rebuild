@@ -160,7 +160,7 @@ class TestWarpedFaces:
 
 
 class TestRevolve:
-    """A revolved 2D mesh must measure the ring, not the meridional slice."""
+    """A revolved 2D mesh must measure the ring, not the (x, r) slice."""
 
     def annulus(self, inner=1.0, outer=2.0, length=1.0):
         """One quad spanning `inner` to `outer` in radius: a hollow cylinder."""

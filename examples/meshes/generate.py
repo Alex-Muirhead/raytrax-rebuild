@@ -52,7 +52,7 @@ def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, outp
     """A 2D rectangle, quads on the lower half and triangles on the upper.
 
     It sits at y >= 0 so the same mesh reads either as an extruded slab or,
-    revolved about y = 0, as the meridional half-plane of `cylinder`.
+    revolved about y = 0, as the `(x, r)` half-plane of `cylinder`.
     """
     gmsh.initialize()
     gmsh.model.add("plane")
@@ -160,7 +160,7 @@ def reentry(
     mesh_size: float = 1.0,
     output: Path = HERE / "reentry.msh",
 ):
-    """The shock layer around a Stardust-like capsule, as the meridional (x, r) half-plane.
+    """The shock layer around a Stardust-like capsule, as the (x, r) half-plane.
 
     The capsule is solid and is not meshed: it is the `wall` boundary. Lengths
     are metres, the stagnation point is the origin, and the freestream runs

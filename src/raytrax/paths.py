@@ -11,7 +11,7 @@ from jaxtyping import Array, Float
 from raytrax.random import cosine_hemisphere, simplex, sphere
 from raytrax.shapes import Index, KeyArray, Normals, Offsets, Scalar, Vector
 
-# Meridional column order for a revolved mesh.
+# Column order for a revolved mesh.
 AXIAL, RADIAL = 0, 1
 
 # Directions are always drawn in 3D, whatever the mesh dimension.
@@ -134,7 +134,7 @@ class LinearPath(Path[LinearState]):
 
 
 class AxisymmetricPath(Path[HyperbolicState]):
-    """Revolved rays: a 2D mesh read as the meridional half-plane `(x, r)`.
+    """Revolved rays: a 2D mesh read as the `(x, r)` half-plane.
 
     A straight 3D ray projects to a hyperbola. The crossing parameter is a step
     in the hyperbola's own parameter, not a distance; `advance` converts it.
@@ -143,7 +143,7 @@ class AxisymmetricPath(Path[HyperbolicState]):
     @classmethod
     @override
     def simplex_point(cls, key: KeyArray, corners: Float[Array, "ncorner ndim"]) -> Vector:
-        # A ring is not uniform in the meridional plane: the density carries a
+        # A ring is not uniform in the (x, r) half-plane: the density carries a
         # factor r, making it a mixture over the corners. Drawing one dimension
         # up and folding the spare weight into corner `i` is Dirichlet with
         # alpha_i = 2 and the rest 1, which is that mixture's component.

@@ -26,7 +26,7 @@ with app.setup:
     MESHES = Path(__file__).parent / "meshes"
     FIGURES = Path(__file__).parent / "figures"
 
-    # Mesh file, and whether it is read as the meridional half-plane.
+    # Mesh file, and whether it is read as the (x, r) half-plane.
     CASES = {
         "slab_planar": ("slab", False),
         "slab_axisymmetric": ("slab", True),
@@ -106,7 +106,7 @@ def prepare(name):
     """Read one case and build everything a trace needs except the rays.
 
     `geom` is what the physics uses and is ring-weighted when revolved;
-    positions stay meridional, so the profiles read `mesh.geometry` instead.
+    positions stay in `(x, r)`, so the profiles read `mesh.geometry` instead.
     """
     stem, axisymmetric = CASES[name]
     path = MESHES / f"{stem}.msh"

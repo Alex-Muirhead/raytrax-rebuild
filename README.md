@@ -8,7 +8,7 @@ Supports mixed-element unstructured grids: triangles and quads in 2D; tets,
 hexahedra, wedges and pyramids in 3D.
 
 A 2D mesh is read either as **planar**, a slice through something extruded out
-of plane, or as **axisymmetric**, the meridional half-plane of a solid of
+of plane, or as **axisymmetric**, the `(x, r)` half-plane of a solid of
 revolution. Either way a 2D run carries genuine 3D directions rather than
 radiation confined to the plane. `paths.py` documents how the ray state stores
 that.

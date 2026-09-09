@@ -39,7 +39,7 @@ def _():
     - **plane** - 2D, deliberately **mixed**: quads on the lower half,
       triangles on the upper, sharing an interior face.
     - **axisymmetric** - *the very same 2D mesh*, revolved about its `y = 0`
-      edge, so it becomes the meridional half-plane `(x, r)` of the cylinder.
+      edge, so it becomes the `(x, r)` half-plane of the cylinder.
 
     The last two differ only in how the mesh is read. **Planar** extrudes it
     infinitely out of plane; only the in-plane part of a direction is stored, so

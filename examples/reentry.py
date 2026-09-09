@@ -39,9 +39,9 @@ def _():
 
     The domain is the shock layer around a Stardust-like capsule: a 60 degree
     sphere-cone forebody, a shoulder, and a conical backshell, meshed as the
-    meridional `(x, r)` half-plane and revolved about `r = 0`. The capsule is
-    solid, so it is not meshed at all -- it is the `wall` boundary, and the grey
-    silhouette in every figure below.
+    `(x, r)` half-plane and revolved about `r = 0`. The capsule is solid, so it
+    is not meshed at all -- it is the `wall` boundary, and the grey silhouette
+    in every figure below.
 
     Four boundaries close the domain:
 
@@ -119,7 +119,7 @@ def _():
         """Trace the shock layer, returning the mesh, its ring weighting, and the deposits.
 
         `geom` is what the physics uses and is ring-weighted; positions stay
-        meridional, so the figures read `mesh.geometry` instead.
+        in `(x, r)`, so the figures read `mesh.geometry` instead.
         """
         path = MESHES / "reentry.msh"
         if not path.exists():
@@ -190,7 +190,7 @@ def _(deposit, geom, mesh):
         """Wall faces from the stagnation point back, with the surface distance to each."""
         wall = group_faces("wall")
         wall = wall[np.argsort(mesh.geometry.faces.centroid[wall, 0])]
-        # Meridional, a face is a segment and its "area" is its length.
+        # In (x, r), a face is a segment and its "area" is its length.
         length = mesh.geometry.faces.area[wall]
         return wall, np.cumsum(length) - length / 2, length
 

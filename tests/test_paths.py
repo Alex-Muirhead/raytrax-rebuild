@@ -1,6 +1,6 @@
 """The axisymmetric crossing, against a high-precision reference.
 
-A straight 3D ray projects to a hyperbola in the meridional half-plane, so the
+A straight 3D ray projects to a hyperbola in the (x, r) half-plane, so the
 reference here is the projection itself, evaluated in longdouble: `r(t)` is the
 square root of a quadratic and needs no hyperbola at all. Bisecting
 `max_i g_i(t)` finds where the ray leaves a convex cell, independently of how
@@ -19,7 +19,7 @@ LD = np.longdouble
 PATH = AxisymmetricPath()
 
 
-def meridional(t, ray, dtype=LD):
+def trace(t, ray, dtype=LD):
     """The projected trace `(x, r)` of a 3D ray, at parameter `t`."""
     x0, r0, axial, radial = (dtype(v) for v in ray)
     t = np.asarray(t, dtype=dtype)
@@ -29,7 +29,7 @@ def meridional(t, ray, dtype=LD):
 
 def gap(t, normal, offset, ray):
     """`max_i (n_i . p(t) - c_i)`: negative inside the cell, zero on its boundary."""
-    x, r = meridional(t, ray)
+    x, r = trace(t, ray)
     n, c = np.asarray(normal, LD), np.asarray(offset, LD)
     return (n[:, 0] * np.asarray(x)[..., None] + n[:, 1] * np.asarray(r)[..., None] - c).max(axis=-1)
 
@@ -109,7 +109,7 @@ class TestCrossing:
             if want is None or want < 1e-9:
                 continue
             moved, _ = cross(jnp.array([ray[0], ray[1]]), jnp.asarray(direction), normal, offset)
-            expected = np.array([float(c) for c in meridional(LD(want), ray)])
+            expected = np.array([float(c) for c in trace(LD(want), ray)])
             errors.append(np.linalg.norm(np.asarray(moved.position) - expected))
             assert float(moved.travel) == approx(want, rel=1e-9)
         assert len(errors) > 300, "too few cases produced a bounded exit"
@@ -130,7 +130,7 @@ class TestCrossing:
             if want is None or want < 1e-9:
                 continue
             moved, _ = cross(jnp.array([ray[0], ray[1]]), jnp.asarray(direction), normal, offset)
-            expected = np.array([float(c) for c in meridional(LD(want), ray)])
+            expected = np.array([float(c) for c in trace(LD(want), ray)])
             errors.append(np.linalg.norm(np.asarray(moved.position) - expected))
         assert len(errors) > 80
         assert max(errors) < 1e-9
@@ -151,12 +151,12 @@ class TestCrossing:
                 continue
             # Did the arc turn before leaving? The radius bottoms out inside.
             probe = np.linspace(0.0, want, 200)
-            _, radius = meridional(probe, ray)
+            _, radius = trace(probe, ray)
             if not (0 < int(np.argmin(radius)) < len(probe) - 1):
                 continue
             turned += 1
             moved, _ = cross(jnp.array([ray[0], ray[1]]), jnp.asarray(direction), normal, offset)
-            expected = np.array([float(c) for c in meridional(LD(want), ray)])
+            expected = np.array([float(c) for c in trace(LD(want), ray)])
             assert np.linalg.norm(np.asarray(moved.position) - expected) < 1e-10
         assert turned > 20, f"only {turned} cases actually turned inside the cell"
 

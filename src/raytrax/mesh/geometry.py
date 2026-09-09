@@ -162,11 +162,11 @@ def build(topology: MeshTopology, vertices: np.ndarray) -> MeshGeometry:
 
 
 def revolve(geometry: MeshGeometry, radial: int = 1) -> MeshGeometry:
-    """Reweight a meridional mesh as the solid it sweeps out when revolved.
+    """Reweight an (x, r) mesh as the solid it sweeps out when revolved.
 
     Volumes and areas become those of the ring and the surface of revolution,
     and the decomposition weights with them, so a draw over either is uniform in
-    the revolved solid rather than in the plane. Positions are left meridional.
+    the revolved solid rather than in the plane. Positions are left in (x, r).
     """
     dim = geometry.vertices.shape[1]
     if dim != 2:
@@ -189,7 +189,7 @@ def revolve(geometry: MeshGeometry, radial: int = 1) -> MeshGeometry:
     face_ring = faces.fan_weight * fan_radius
     face_scale = face_ring.sum(axis=1)
     # A face lying on the axis sweeps nothing. Its area is genuinely zero, so it
-    # can never be drawn from; keep its meridional weights rather than divide.
+    # can never be drawn from; keep its original weights rather than divide.
     swept = face_scale > 0
 
     return MeshGeometry(

@@ -35,7 +35,7 @@ with app.setup:
     MESHES = Path(__file__).parent / "meshes"
     FIGURES = Path(__file__).parent / "figures"
 
-    # Mesh file, and whether it is read as the meridional half-plane.
+    # Mesh file, and whether it is read as the (x, r) half-plane.
     CASES = {
         "slab_planar": ("slab", False),
         "slab_axisymmetric": ("slab", True),
@@ -69,8 +69,8 @@ def _():
 
     - **slab_planar** and **slab_axisymmetric** - one jumbled 2D mesh, triangles
       scattered among quads at varying cell size, read two different ways. Both
-      are drawn flat, the axisymmetric one as the meridional `(x, r)`
-      half-plane it is solved in.
+      are drawn flat, the axisymmetric one as the `(x, r)` half-plane it is
+      solved in.
     - **cylinder_coarse** - 3D tets, cut in half so whole cells survive on the
       cut face. Coarse, because the point is the cells.
     - **cylinder** - the same at full resolution, for the heating field.
@@ -95,7 +95,7 @@ def _():
     size varies across the domain, and it is conformal throughout: every
     interior face has exactly two cells on it, whatever their element types.
     One file, and it reads either as an extruded slab or, revolved about
-    `y = 0`, as the meridional half-plane of the cylinder. Those are the two
+    `y = 0`, as the `(x, r)` half-plane of the cylinder. Those are the two
     `slab_*` cases, and they are the same 1,593 cells either way.
 
     `cylinder_coarse` exists only to be looked at. The full `cylinder` is
@@ -137,7 +137,7 @@ def solve(name, absorptivity, rays):
     """Trace one case, returning the mesh, its weighting, and cell heating.
 
     `geom` is what the physics uses and is ring-weighted when revolved;
-    positions stay meridional, so plots read `mesh.geometry` instead.
+    positions stay in `(x, r)`, so plots read `mesh.geometry` instead.
     """
     stem, axisymmetric = CASES[name]
     path = MESHES / f"{stem}.msh"
