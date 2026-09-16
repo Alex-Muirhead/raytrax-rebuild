@@ -1,7 +1,7 @@
 # Architecture
 
-Where the code lives and what must hold across it. `DECISIONS.md` states the
-argument behind each invariant; this file states the invariant.
+Where the code lives and what must hold across it. `.claude/DECISIONS.md` states
+the argument behind each invariant; this file states the invariant.
 
 ## Layout
 

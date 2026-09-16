@@ -10,8 +10,9 @@ wheels/
 # Virtual environments
 .venv
 
-# Config directories
-.claude
+# Config directories, minus the instructions the team shares
+.claude/*
+!.claude/*.md
 
 # Big files
 *.msh

@@ -18,7 +18,3 @@ that.
 - [`docs/hyperbolic.typ`](docs/hyperbolic.typ) - how a straight 3D ray projects
   to a hyperbola in a revolved 2D mesh, the crossing that needs, and what the
   geometry has to be reweighted to.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) - where the code lives and what must hold
-  across it.
-- [`DECISIONS.md`](DECISIONS.md) - why the design is the way it is, and what
-  each choice was chosen over.

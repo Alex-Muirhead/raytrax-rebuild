@@ -3,10 +3,10 @@
 Why the design is the way it is, and what each choice was chosen over. Newest
 first.
 
-`ARCHITECTURE.md` states the invariants a reader must not violate. This file
-states the argument behind them, which the conventions deliberately keep out of
-docstrings, comments and commit messages. Keep entries to the four lines below;
-anything longer belongs in `docs/`.
+`.claude/ARCHITECTURE.md` states the invariants a reader must not violate. This
+file states the argument behind them, which the conventions deliberately keep
+out of docstrings, comments and commit messages. Keep entries to the four lines
+below; anything longer belongs in `docs/`.
 
 ## The lane count is measured off the compiled march, not configured per GPU
 
@@ -162,7 +162,7 @@ which silently eats the genuine exit.
 where the host-side geometry already lives.
 **Instead of:** A mode flag threaded through the host/device boundary.
 **Cost:** The caller can forget it and get Cartesian cells with a revolved path,
-so `ARCHITECTURE.md` states the pairing.
+so `.claude/ARCHITECTURE.md` states the pairing.
 
 ## The axis convention is hardcoded to columns 0 and 1
 
