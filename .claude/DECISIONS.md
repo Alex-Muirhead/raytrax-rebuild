@@ -8,6 +8,24 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## The march's phases carry `jax.named_scope`, so a kernel can be traced back
+
+`uzqmsvou`, 2026-09-17
+
+**Why:** XLA fuses the whole `while` body and keeps no source file or line in
+the HLO it emits, so the profiler's kernel table reads `loop_divide_fusion_3`
+and nothing says which of our functions is inside it. `jax.named_scope` is the
+one annotation that survives fusion: it lands in each operation's `op_name`, so
+`crossing`, `advance`, `attenuate`, `interaction`, `refill` and `scatter` come
+back out of the optimised HLO and `kernel_profile.py --attribute` rolls the
+kernel times up per scope.
+**Instead of:** `jax_include_full_tracebacks_in_locations`, which does not put
+`source_file` into the metadata `as_text` prints; and reading the fused jaxpr
+primitives, which name `mul x8` and point nowhere.
+**Cost:** Six annotations in the hot path that exist only for the profiler, and
+a scope rollup that splits a kernel's time by how many operations each scope
+put in it, which is a share of instructions rather than of cycles.
+
 ## Lane sizing is a decorator in its own module, not a branch inside `trace`
 
 `zxluwltv`, 2026-09-16

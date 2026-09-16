@@ -51,6 +51,7 @@ def build(
     return Interactions(kind=tuple(Kind(value) for value in kind), reflectivity=jnp.asarray(rho))
 
 
+@jax.named_scope("interaction")
 def apply(
     path: Path[Any],
     interactions: Interactions,

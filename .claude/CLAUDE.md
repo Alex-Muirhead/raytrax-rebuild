@@ -31,6 +31,7 @@ not committed:
 uv run python examples/meshes/generate.py
 uv run marimo edit examples/tracing.py          # the tutorial, matplotlib only
 uv run python scripts/benchmark.py --case slab_planar --lanes 65536
+uv run --group profiling python scripts/run_profile.py --case reentry   # stages and kernels of a whole run
 ```
 
 `JAX_PLATFORMS=cpu` runs the same code on the host. `.envrc` sets

@@ -63,6 +63,7 @@ class Rays(eqx.Module):
     alive: Bool[Array, " nray"]
 
 
+@jax.named_scope("refill")
 def _refill(
     key: KeyArray, rays: Rays, launched: Index, launch: Launch, scene: Scene, path: Path[Any]
 ) -> tuple[Rays, Index]:
@@ -112,9 +113,10 @@ def step(
     parameter = jnp.maximum(parameter, 0.0)
 
     moved, flown = path.advance(state, parameter)
-    transmission = jnp.exp(-absorptivity[cell] * flown)
-    cell_deposit = energy * (1 - transmission)
-    energy = energy * transmission
+    with jax.named_scope("attenuate"):
+        transmission = jnp.exp(-absorptivity[cell] * flown)
+        cell_deposit = energy * (1 - transmission)
+        energy = energy * transmission
     state = moved
 
     face = scene.cells.face[cell, slot]
@@ -190,13 +192,14 @@ def march(
 
         # The scatter *must* be outside the vmap; inside it, XLA materialises a
         # full per-ray copy of the accumulator and memory use explodes.
-        deposit = Deposit(
-            cells=deposit.cells.at[rays.cell].add(
-                jnp.where(extinct, rays.energy, jnp.where(stepping, crossed.cell_deposit, 0.0))
-            ),
-            faces=deposit.faces.at[crossed.face].add(jnp.where(stepping, crossed.face_deposit, 0.0)),
-            escaped=deposit.escaped + jnp.sum(jnp.where(leaving, crossed.energy, 0.0)),
-        )
+        with jax.named_scope("scatter"):
+            deposit = Deposit(
+                cells=deposit.cells.at[rays.cell].add(
+                    jnp.where(extinct, rays.energy, jnp.where(stepping, crossed.cell_deposit, 0.0))
+                ),
+                faces=deposit.faces.at[crossed.face].add(jnp.where(stepping, crossed.face_deposit, 0.0)),
+                escaped=deposit.escaped + jnp.sum(jnp.where(leaving, crossed.energy, 0.0)),
+            )
         rays = Rays(
             cell=_keep(stepping, crossed.cell, rays.cell),
             state=_keep_tree(stepping, crossed.state, rays.state),

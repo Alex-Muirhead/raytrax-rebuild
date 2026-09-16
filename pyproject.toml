@@ -28,7 +28,8 @@ dev = [
     "scipy>=1.16.3",
 ]
 profiling = [
-    "xprof>=2.23.1",
+    "tb-nightly>=2.21.0a20251023",
+    "xprof-nightly>=2.24.2a20260915",
 ]
 
 [build-system]

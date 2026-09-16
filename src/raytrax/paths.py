@@ -109,6 +109,7 @@ class LinearPath(Path[LinearState]):
 
     @classmethod
     @override
+    @jax.named_scope("crossing")
     def crossing(cls, normal: Normals, offset: Offsets, state: LinearState) -> tuple[Index, Scalar]:
         epsilon = np.finfo(default_floating_dtype()).resolution
 
@@ -125,6 +126,7 @@ class LinearPath(Path[LinearState]):
 
     @classmethod
     @override
+    @jax.named_scope("advance")
     def advance(cls, state: LinearState, parameter: Scalar) -> tuple[LinearState, Scalar]:
         return LinearState(
             position=state.position + parameter * state.tangent,
@@ -164,6 +166,7 @@ class AxisymmetricPath(Path[HyperbolicState]):
         return HyperbolicState(position, direction[:2], travel, angular_momentum)
 
     @classmethod
+    @jax.named_scope("frame")
     def frame(cls, state: HyperbolicState) -> tuple[Vector, Vector, Scalar, Scalar]:
         """The two asymptote directions, and how far along each the ray currently sits.
 
@@ -183,6 +186,7 @@ class AxisymmetricPath(Path[HyperbolicState]):
         return forward, backward, *cls.asymptote_coordinates(state, eccentricity)
 
     @classmethod
+    @jax.named_scope("asymptote_coordinates")
     def asymptote_coordinates(cls, state: HyperbolicState, eccentricity: Scalar) -> tuple[Scalar, Scalar]:
         """How far along the outgoing and incoming asymptotes the ray sits.
 
@@ -201,6 +205,7 @@ class AxisymmetricPath(Path[HyperbolicState]):
 
     @classmethod
     @override
+    @jax.named_scope("crossing")
     def crossing(cls, normal: Normals, offset: Offsets, state: HyperbolicState) -> tuple[Index, Scalar]:
         forward, backward, forward_length, backward_length = cls.frame(state)
 
@@ -228,6 +233,7 @@ class AxisymmetricPath(Path[HyperbolicState]):
 
     @classmethod
     @override
+    @jax.named_scope("advance")
     def advance(cls, state: HyperbolicState, parameter: Scalar) -> tuple[HyperbolicState, Scalar]:
         forward, backward, forward_length, backward_length = cls.frame(state)
         # The anchored parameter `v = exp(dtheta)` for `dtheta` the hyperbolic
