@@ -8,6 +8,21 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## `extend` is a compiled method of `Tally`
+
+`uluuwvpm`, 2026-09-17
+
+**Why:** `resume` only turned `num_rays` into an array before it called the
+compiled `extend`, and the two had the same docstring. `jit_tools.jit_dynamic`
+does that conversion in the decorator, and a method matches `estimate` and
+`in_flight`. It is next to `lane_capacity`, which also works on what
+`filter_jit` returns, and with it `tuning.py` became `jit_tools.py`: tools
+around JIT-compiled functions, not the compiler itself.
+**Instead of:** A public `resume` that wraps a module-level `extend`, or asking
+the caller to pass `num_rays` as an array.
+**Cost:** `Tally.extend` has no `lower`. A caller that needs one wraps
+`Tally.extend.__wrapped__` in `eqx.filter_jit` and passes `num_rays` as an array.
+
 ## A run is a `Tally` on a `Problem`, and rays launch with energy 1
 
 `lstsqluo`, 2026-09-17

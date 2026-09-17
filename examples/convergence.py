@@ -14,7 +14,7 @@ with app.setup:
     import numpy as np
     from scipy.special import expn
 
-    from raytrax import interactions, sources, transport, tuning
+    from raytrax import interactions, jit_tools, sources, transport
     from raytrax import scene as scene_module
     from raytrax.interactions import Interactions, Kind
     from raytrax.io import vtk
@@ -135,7 +135,7 @@ def prepare(name):
     reference = float(source.total) / geom.cells.volume.sum()
     # Held on the case so every ray count in the sweep marches the same width,
     # and the curve is a statement about rays rather than about batches.
-    lanes = tuning.device_width()
+    lanes = jit_tools.device_width()
     return Case(mesh, geom, scene, trace_path, table, source, reference, lanes)
 
 

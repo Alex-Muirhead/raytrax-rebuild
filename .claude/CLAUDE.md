@@ -75,22 +75,22 @@ NumPy up to `scene.build`, JAX after it:
 8. `transport.trace(key, problem, num_rays)` returns a `Tally`, and
    `tally.estimate(problem)` the `Deposit`: `cells`, `faces` and the scalar
    `escaped`, which with `tally.in_flight(problem)` equal `sources.total`.
-   `transport.resume(tally, problem, num_rays)` adds `num_rays` more rays to
-   the same tally.
+   `tally.extend(problem, num_rays)` adds `num_rays` more rays to the same
+   tally.
 
 `path` is `LinearPath` or `AxisymmetricPath` and must match what step 2 did.
 Path subclasses are stateless: every method is a classmethod, and per-ray
 constants live in the `RayState` that `launch` builds.
 
-`trace` is `launch_and_march` decorated with `tuning.autosized("lanes")`:
-leaving `lanes` out takes the width from `tuning.device_width` and narrows it
+`trace` is `launch_and_march` decorated with `jit_tools.autosized("lanes")`:
+leaving `lanes` out takes the width from `jit_tools.device_width` and narrows it
 again on an overrun, while a lane count passed in is marched as given and lets
 the overrun raise. `launch_and_march` makes an empty `Tally` and calls
-`resume`, which calls the one compiled loop, `extend`. `march` takes a fixed
+the one compiled loop, `Tally.extend`. `march` takes a fixed
 `steps` and never launches or stops; `extend` refills dead lanes, calls it for
 `refill_interval` steps, and stops between those chunks once every ray is
 spent. Each ray launches with energy 1, and a ray at or below `extinction` is
-stopped and emptied where it stands. `tuning.lane_capacity` is the
+stopped and emptied where it stands. `jit_tools.lane_capacity` is the
 separate memory ceiling, and is no longer on the default path.
 
 ## Documents

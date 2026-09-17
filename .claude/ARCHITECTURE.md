@@ -16,8 +16,9 @@ manageable:
 - `problem.py` - `Problem`, the five inputs that say what is simulated: scene,
   path, interactions, absorptivity and sources. Everything else a run takes
   says how it is solved.
-- `tuning.py` - how wide a batch to march, never where a ray goes. It knows
-  about the device, not about the physics, and imports nothing from the package.
+- `jit_tools.py` - tools for JIT-compiled functions: what recompiles them, and
+  the batch width and memory of a compile. It knows about JAX and the device,
+  not about the physics, and imports nothing from the package.
 
 ## Physics invariants
 
@@ -43,8 +44,8 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   be handed to another ray, so anything left in it is gone. `cells + faces +
   escaped` plus what the step cap caught still in flight is therefore
   `launched`, at any lane count.
-- **A tally is extended only on the problem it was run on.** `resume` adds
-  rays to the sums and continues the rays in flight, and nothing checks that
+- **A tally is extended only on the problem it was run on.** `Tally.extend`
+  adds rays to the sums and continues the rays in flight, and nothing checks that
   the `Problem` is the same one. The lane count is fixed by `Tally.empty`.
 - **Cell and face emission are in the same units, so one draw over
   `Sources.cumulative` picks between them.** Volume emission is isotropic;
@@ -105,17 +106,17 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
 - **The lane count is set by the device's width, not by the ray count.** A step
   is `vmap`ped over every lane and costs the same whether that lane is alive or
   dead, so the march costs `lanes x steps` and lanes past what the cores hold
-  buy no parallelism. `tuning.device_width` is `core_count` times the threads a
-  core keeps resident, oversubscribed; it also bounds memory, which is linear in
-  lanes. `tuning.lane_capacity` still reads XLA's memory analysis for a caller
+  buy no parallelism. `jit_tools.device_width` is `core_count` times the threads
+  a core keeps resident, oversubscribed; it also bounds memory, which is linear in
+  lanes. `jit_tools.lane_capacity` still reads XLA's memory analysis for a caller
   that wants the ceiling, but `trace` no longer marches at it.
-- **`trace` is `launch_and_march` wearing `tuning.autosized("lanes")`.** The
+- **`trace` is `launch_and_march` wearing `jit_tools.autosized("lanes")`.** The
   decorator is the only place a width is *chosen*: leaving `lanes` out asks for
   that choice and accepts being narrowed on an overrun, while a lane count the
   caller passes is marched exactly as given, so the `RESOURCE_EXHAUSTED` reaches
   them. The width does not depend on `num_rays`: a lane past the budget is never
-  refilled and stays empty, so a later `resume` with any ray count reuses the
-  same compiled loop.
+  refilled and stays empty, so a later `Tally.extend` with any ray count reuses
+  the same compiled loop.
 - **The first batch is drawn inside the same `jit` as the march.** Drawn
   outside it the sampling is a second executable, and its buffers cannot be
   reused as march scratch; on the re-entry case that cost a fifth of the peak.
@@ -128,6 +129,8 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   for the end only there. The extinction `floor` is an absolute energy, which
   is `extinction` because rays launch with energy 1; a floor derived inside
   `march` from the live energies would drift between chunks.
-- **`extend` is the only compiled driver.** `resume` passes `num_rays` to it as
+- **`Tally.extend` is the only compiled driver.**
+  `jit_tools.jit_dynamic("num_rays")` passes `num_rays` to `eqx.filter_jit` as
   an array and `launch_and_march` is plain Python, so a first run and every
-  resume at the same lane count and static settings share one compile.
+  extend at the same lane count and static settings share one compile. A Python
+  int reaching `filter_jit` directly is static, and compiles once per ray count.

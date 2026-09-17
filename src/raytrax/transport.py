@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float, Int
 
 from raytrax import interactions as interaction
-from raytrax import tuning
+from raytrax import jit_tools
 from raytrax.paths import RayState
 from raytrax.problem import Problem
 from raytrax.scene import Scene
@@ -318,6 +318,10 @@ def march(key: KeyArray, rays: Rays, problem: Problem, steps: int, floor: float 
     return rays, deposit
 
 
+# (steps taken, key, rays launched so far, the batch, the accumulator)
+type Carry = tuple[Index, KeyArray, Index, Rays, Deposit]
+
+
 class Tally(eqx.Module):
     """The running sums of a Monte-Carlo run on one problem, which a later run can extend.
 
@@ -398,98 +402,60 @@ class Tally(eqx.Module):
         """
         return jnp.sum(self.rays.energy) * problem.sources.total / self.launched
 
+    @jit_tools.jit_dynamic("num_rays")
+    def extend(
+        self,
+        problem: Problem,
+        num_rays: int | Index,
+        max_steps: int = 100_000,
+        refill_interval: int = 8,
+        extinction: float = 1e-8,
+    ) -> "Tally":
+        """Launch `num_rays` more rays into the tally, and march until they all stop.
 
-# (steps taken, key, rays launched so far, the batch, the accumulator)
-type Carry = tuple[Index, KeyArray, Index, Rays, Deposit]
+        The problem must be the one that the tally was run on. Nothing checks this.
 
+        Parameters
+        ----------
+        problem
+            The problem that the tally was run on.
+        num_rays
+            The number of rays to add. Zero only finishes the rays still in flight.
+        max_steps
+            The largest number of steps in this run, rounded up to a multiple of
+            `refill_interval`. It is a safety limit: the run stops when all rays stop.
+        refill_interval
+            The number of steps between refills of dead lanes, and between checks
+            for the end of the run. The best value changes with the problem.
+        extinction
+            The fraction of the launch energy of a ray at or below which the ray
+            stops and deposits its remaining energy in its cell.
 
-@eqx.filter_jit
-def extend(
-    tally: Tally, problem: Problem, num_rays: Index, max_steps: int, refill_interval: int, extinction: float
-) -> Tally:
-    """Launch more rays into a tally, and march until they all stop.
+        Returns
+        -------
+        tally
+            The tally with the new rays added. Rays that are still alive hit the step limit.
+        """
+        budget = self.launched + num_rays
 
-    This is the compiled loop of `resume`. It takes `num_rays` as an array, so a
-    new ray count does not cause a recompile.
+        def body(carry: Carry) -> Carry:
+            taken, key, launched, rays, deposit = carry
+            key, key_refill, key_march = jax.random.split(key, 3)
+            rays, launched = jax.lax.cond(
+                launched < budget,
+                lambda: refill(key_refill, rays, launched, budget, problem),
+                lambda: (rays, launched),
+            )
+            rays, chunk = march(key_march, rays, problem, refill_interval, extinction)
+            return taken + refill_interval, key, launched, rays, jax.tree.map(jnp.add, deposit, chunk)
 
-    Parameters
-    ----------
-    tally
-        The tally to extend.
-    problem
-        The problem that the tally was run on.
-    num_rays
-        The number of rays to add.
-    max_steps
-        The largest number of steps in this run.
-    refill_interval
-        The number of steps between refills of dead lanes.
-    extinction
-        The fraction of the launch energy at or below which a ray stops.
+        def cond(carry: Carry) -> Flag:
+            taken, _, launched, rays, _ = carry
+            return (taken < max_steps) & (jnp.any(rays.alive) | (launched < budget))
 
-    Returns
-    -------
-    tally
-        The extended tally.
-    """
-    budget = tally.launched + num_rays
-
-    def body(carry: Carry) -> Carry:
-        taken, key, launched, rays, deposit = carry
-        key, key_refill, key_march = jax.random.split(key, 3)
-        rays, launched = jax.lax.cond(
-            launched < budget,
-            lambda: refill(key_refill, rays, launched, budget, problem),
-            lambda: (rays, launched),
-        )
-        rays, chunk = march(key_march, rays, problem, refill_interval, extinction)
-        return taken + refill_interval, key, launched, rays, jax.tree.map(jnp.add, deposit, chunk)
-
-    def cond(carry: Carry) -> Flag:
-        taken, _, launched, rays, _ = carry
-        return (taken < max_steps) & (jnp.any(rays.alive) | (launched < budget))
-
-    start: Carry = (jnp.asarray(0), tally.key, tally.launched, tally.rays, tally.deposit)
-    _, key, launched, rays, deposit = jax.lax.while_loop(cond, body, start)
-    return Tally(key=key, launched=launched, rays=rays, deposit=deposit)
-
-
-def resume(
-    tally: Tally,
-    problem: Problem,
-    num_rays: int,
-    max_steps: int = 100_000,
-    refill_interval: int = 8,
-    extinction: float = 1e-8,
-) -> Tally:
-    """Launch `num_rays` more rays into a tally, and march until they all stop.
-
-    The problem must be the one that the tally was run on. Nothing checks this.
-
-    Parameters
-    ----------
-    tally
-        The tally to extend. Its lanes set the batch width.
-    problem
-        The problem that the tally was run on.
-    num_rays
-        The number of rays to add. Zero only finishes the rays still in flight.
-    max_steps
-        The largest number of steps in this run, rounded up to a multiple of
-        `refill_interval`. It is a safety limit: the run stops when all rays stop.
-    refill_interval
-        The number of steps between refills of dead lanes, and between checks
-        for the end of the run. The best value changes with the problem.
-    extinction
-        The fraction of the launch energy of a ray at or below which the ray
-        stops and deposits its remaining energy in its cell.
-
-    Returns
-    -------
-    tally
-        The tally with the new rays added. Rays that are still alive hit the step limit.
-    """
-    return extend(tally, problem, jnp.asarray(num_rays), max_steps, refill_interval, extinction)
+        start: Carry = (jnp.asarray(0), self.key, self.launched, self.rays, self.deposit)
+        _, key, launched, rays, deposit = jax.lax.while_loop(cond, body, start)
+        return Tally(key=key, launched=launched, rays=rays, deposit=deposit)
 
 
 def launch_and_march(
@@ -514,21 +480,21 @@ def launch_and_march(
     lanes
         The number of rays in flight at one time, or None for `num_rays`.
     max_steps
-        The largest number of steps, as in `resume`.
+        The largest number of steps, as in `Tally.extend`.
     refill_interval
-        The number of steps between refills of dead lanes, as in `resume`.
+        The number of steps between refills of dead lanes, as in `Tally.extend`.
     extinction
-        The fraction of the launch energy at or below which a ray stops, as in `resume`.
+        The fraction of the launch energy at or below which a ray stops, as in `Tally.extend`.
 
     Returns
     -------
     tally
-        The tally. `Tally.estimate` gives the deposit, and `resume` adds more rays.
+        The tally. `Tally.estimate` gives the deposit, and `Tally.extend` adds more rays.
     """
     tally = Tally.empty(key, problem, lanes or num_rays)
-    return resume(tally, problem, num_rays, max_steps, refill_interval, extinction)
+    return tally.extend(problem, num_rays, max_steps, refill_interval, extinction)
 
 
 # The entry point: the same run, with a `lanes` that sizes itself to the
 # device when left out. A lane count passed explicitly is marched as given.
-trace = tuning.autosized("lanes")(launch_and_march)
+trace = jit_tools.autosized("lanes")(launch_and_march)

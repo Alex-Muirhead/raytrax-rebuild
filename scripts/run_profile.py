@@ -26,7 +26,7 @@ import jax
 from benchmark import CASES, environment, prepare
 from kernel_profile import kernel_rows
 
-from raytrax import interactions, sources, transport, tuning
+from raytrax import interactions, jit_tools, sources, transport
 from raytrax import scene as scene_module
 from raytrax.io import vtk
 from raytrax.mesh import geometry
@@ -82,7 +82,7 @@ def run(
 ) -> dict[str, Any]:
     """Time the compile and the marches of one `trace`, at the width it would pick."""
     key = jax.random.key(0)
-    lanes = (lanes or tuning.device_width()) or num_rays
+    lanes = (lanes or jit_tools.device_width()) or num_rays
 
     def trace() -> Any:
         return transport.trace(
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--case", default="reentry", choices=sorted(CASES))
     parser.add_argument("--rays", type=int, default=1_000_000)
-    parser.add_argument("--lanes", type=int, default=None, help="override the width `tuning.device_width` picks")
+    parser.add_argument("--lanes", type=int, default=None, help="override the width `jit_tools.device_width` picks")
     parser.add_argument("--max-steps", type=int, default=2_000)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--refill-interval", type=int, default=8, help="steps between refills of the dead lanes")

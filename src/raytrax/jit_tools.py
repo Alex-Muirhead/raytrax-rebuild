@@ -1,6 +1,7 @@
-"""How wide a batch to march, for the device marching it.
+"""Tools for JIT-compiled functions: what causes a recompile, and the batch width and memory of a compile.
 
-Nothing here decides where a ray goes, only how many go at once.
+The tools know about JAX and the device, not about rays. Nothing here decides
+where a ray goes.
 """
 
 import functools
@@ -8,7 +9,9 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
+import equinox as eqx
 import jax
+import jax.numpy as jnp
 from jax.errors import JaxRuntimeError
 
 # Narrower than this a batch is not worth marching, so a width that has been
@@ -159,5 +162,47 @@ def autosized[**P, T](
                     size //= 2
 
         return sized
+
+    return decorate
+
+
+def jit_dynamic[**P, T](*names: str) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """Make a decorator that compiles a function, with the named arguments always dynamic.
+
+    `eqx.filter_jit` makes a Python scalar argument static, so each new value
+    compiles again.
+
+    Parameters
+    ----------
+    names
+        The names of the parameters to pass as arrays.
+
+    Returns
+    -------
+    decorate
+        The decorator.
+
+    Raises
+    ------
+    TypeError
+        If the decorated function has no parameter with one of the names.
+    """
+
+    def decorate(function: Callable[P, T]) -> Callable[P, T]:
+        signature = inspect.signature(function)
+        missing = [name for name in names if name not in signature.parameters]
+        if missing:
+            raise TypeError(f"{function} takes no arguments named {missing!r}")
+        compiled = eqx.filter_jit(function)
+
+        @functools.wraps(function)
+        def dynamic(*args: P.args, **kwargs: P.kwargs) -> T:
+            bound = signature.bind(*args, **kwargs)
+            for name in names:
+                if name in bound.arguments:
+                    bound.arguments[name] = jnp.asarray(bound.arguments[name])
+            return compiled(*bound.args, **bound.kwargs)
+
+        return dynamic
 
     return decorate

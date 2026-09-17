@@ -1,11 +1,12 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from pytest import approx
 
+from raytrax import jit_tools, sources, transport
 from raytrax import scene as scene_module
-from raytrax import sources, transport, tuning
 from raytrax.interactions import Kind
 from raytrax.mesh import boundaries, geometry, topology
 from raytrax.paths import AxisymmetricPath, LinearPath
@@ -186,7 +187,7 @@ class TestResume:
         of both runs must be launched once, and the balance must close over all of them."""
         case = self.box(Kind.ABSORB)
         tally = transport.trace(jax.random.key(0), case, num_rays=10_000, lanes=2_000)
-        tally = transport.resume(tally, case, num_rays=5_000)
+        tally = tally.extend(case, num_rays=5_000)
 
         deposit = tally.estimate(case)
         assert int(tally.launched) == 15_000
@@ -202,7 +203,7 @@ class TestResume:
         assert bool(jnp.any(tally.rays.alive)), "the step limit did not cut any ray off"
         assert self.accounted(tally, case) == approx(float(case.sources.total), rel=1e-9)
 
-        tally = transport.resume(tally, case, num_rays=0, max_steps=4_000)
+        tally = tally.extend(case, num_rays=0, max_steps=4_000)
         assert not bool(jnp.any(tally.rays.alive)), "the resume did not finish the rays"
         assert int(tally.launched) == 2_000
         assert self.accounted(tally, case) == approx(float(case.sources.total), rel=1e-9)
@@ -214,7 +215,7 @@ class TestResume:
         case = self.box(Kind.ESCAPE)
         single = transport.trace(jax.random.key(0), case, num_rays=20_000, lanes=4_096)
         split = transport.trace(jax.random.key(1), case, num_rays=10_000, lanes=4_096)
-        split = transport.resume(split, case, num_rays=10_000)
+        split = split.extend(case, num_rays=10_000)
 
         total = float(case.sources.total)
         share = float(single.estimate(case).escaped) / total
@@ -236,29 +237,34 @@ class TestLaneSizing:
     def test_the_ceiling_is_a_width_that_still_fits_the_pool(self):
         case = self.case()
 
+        # The same function under a plain filter_jit, which has `lower`; the
+        # ray count must then be an array, as `jit_tools.jit_dynamic` passes it.
+        # pyrefly: ignore[missing-attribute] - it does not model what functools.wraps sets
+        extend = eqx.filter_jit(transport.Tally.extend.__wrapped__)
+
         def lower(lanes):
             tally = transport.Tally.empty(jax.random.key(0), case, lanes)
             # pyrefly: ignore[missing-attribute] - it does not model what filter_jit returns
-            return transport.extend.lower(tally, case, jnp.asarray(1 << 20), 400, 8, 1e-8)
+            return extend.lower(tally, case, jnp.asarray(1 << 20), 400, 8, 1e-8)
 
-        lanes = tuning.lane_capacity(lower)
+        lanes = jit_tools.lane_capacity(lower)
         if lanes is None:
             pytest.skip("the device does not report its memory")
 
-        assert lanes >= tuning.MIN_LANES
+        assert lanes >= jit_tools.MIN_LANES
         # The ceiling is extrapolated from two probe widths, so the check is
         # that the march XLA compiles at it really does claim to fit.
         limit = jax.local_devices()[0].memory_stats()["bytes_limit"]
-        assert tuning.resident_bytes(lower, lanes) <= limit
+        assert jit_tools.resident_bytes(lower, lanes) <= limit
 
     def test_the_default_width_is_the_device_and_not_the_ray_count(self):
-        width = tuning.device_width()
+        width = jit_tools.device_width()
         if width is None:
             pytest.skip("the device does not report its cores")
 
         # A march costs `lanes x steps` whatever is alive, so a batch that grows
         # with the ray count is what the default exists to prevent.
-        assert tuning.MIN_LANES <= width < 1 << 22
+        assert jit_tools.MIN_LANES <= width < 1 << 22
 
         case = self.case()
         tally = transport.trace(jax.random.key(0), case, num_rays=4 * width, max_steps=400)
