@@ -121,6 +121,13 @@ point at them:
   `.claude/ARCHITECTURE.md`.
 - Docstrings should also document *what* each parameter is, not *how* is it used.
   Attempt to describe the responsibility of each parameter in a single line.
+- Docstrings use the NumPy format: `Parameters`, `Returns` and `Raises` for
+  functions, `Attributes` for dataclasses, `eqx.Module`s, `NamedTuple`s and
+  enums, one entry per field. Names only, no types; the annotations carry them.
+  Field descriptions go in `Attributes`, not trailing comments. An `@override`
+  inherits its docstring and a nested helper needs none.
+- Write docstrings in ASD-STE100 Simplified Technical English where possible:
+  present tense, active voice, short sentences, one meaning per word.
 - Comment only what the code cannot say for itself, chiefly framework oddities,
   and say *why* the code deviates from idiom.
 - Commit messages are one-liners. Add a body only to record a fact the diff

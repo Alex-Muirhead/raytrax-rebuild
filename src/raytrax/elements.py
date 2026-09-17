@@ -6,7 +6,20 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ElementType:
-    """A first-order VTK cell, described by the local vertex ids of its faces."""
+    """A first-order VTK cell type, described by the local vertex ids of its faces.
+
+    Attributes
+    ----------
+    name
+        The meshio name of the cell type.
+    dim
+        The dimension of the cell.
+    num_vertices
+        The number of vertices of the cell.
+    faces
+        The local vertex ids of each face, wound counterclockwise when seen from
+        outside the cell. In 2D, the faces are edges.
+    """
 
     name: str
     dim: int
@@ -15,10 +28,12 @@ class ElementType:
 
     @property
     def num_faces(self) -> int:
+        """The number of faces of the cell."""
         return len(self.faces)
 
     @property
     def max_face_verts(self) -> int:
+        """The largest number of vertices on one face."""
         return max(len(face) for face in self.faces)
 
 
@@ -84,6 +99,23 @@ FACE_ELEMENT_NAMES: dict[int, str] = {2: "line", 3: "triangle", 4: "quad"}
 
 
 def lookup(name: str) -> ElementType:
+    """Find a supported cell type by name.
+
+    Parameters
+    ----------
+    name
+        The meshio name of the cell type.
+
+    Returns
+    -------
+    element
+        The cell type.
+
+    Raises
+    ------
+    ValueError
+        If the cell type is not supported.
+    """
     if name not in ELEMENT_TYPES:
         supported = ", ".join(sorted(ELEMENT_TYPES))
         raise ValueError(f"Unsupported element type {name!r}, expected one of: {supported}")

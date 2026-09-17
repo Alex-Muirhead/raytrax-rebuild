@@ -16,12 +16,42 @@ from raytrax.sources import sample as sample_source
 
 
 def _keep(mask: Bool[Array, "..."], new: Array, old: Array) -> Array:
-    """Take `new` where `mask`, else `old`, broadcasting the mask up to `old`."""
+    """Select `new` where the mask is true, and `old` where it is false.
+
+    Parameters
+    ----------
+    mask
+        The selection over the leading axes of `old`.
+    new
+        The values where `mask` is true.
+    old
+        The values where `mask` is false.
+
+    Returns
+    -------
+    selected
+        The selected values, with the shape of `old`.
+    """
     return jnp.where(mask.reshape(mask.shape + (1,) * (old.ndim - mask.ndim)), new, old)
 
 
 def _keep_tree[T](mask: Bool[Array, "..."], new: T, old: T) -> T:
-    """`_keep` leafwise over two pytrees of matching structure."""
+    """Select `new` where the mask is true, and `old` where it is false, for each leaf.
+
+    Parameters
+    ----------
+    mask
+        The selection over the leading axes of each leaf.
+    new
+        The pytree to use where `mask` is true.
+    old
+        The pytree to use where `mask` is false, with the same structure as `new`.
+
+    Returns
+    -------
+    selected
+        The pytree of selected leaves.
+    """
 
     def keep(new_leaf: Array, old_leaf: Array) -> Array:
         return _keep(mask, new_leaf, old_leaf)
@@ -30,10 +60,16 @@ def _keep_tree[T](mask: Bool[Array, "..."], new: T, old: T) -> T:
 
 
 class Deposit(eqx.Module):
-    """Where the energy ended up.
+    """The energy that the rays deposit, and the energy that escapes.
 
-    `escaped` is banked as a ray leaves rather than left in the lane it dies
-    in, which refilling would overwrite.
+    Attributes
+    ----------
+    cells
+        The energy that each cell absorbs.
+    faces
+        The energy that each face absorbs.
+    escaped
+        The energy that leaves the domain.
     """
 
     cells: Float[Array, " ncell"]
@@ -42,10 +78,18 @@ class Deposit(eqx.Module):
 
 
 class Launch(eqx.Module):
-    """Refill dead lanes from a source until a launch budget is spent.
+    """The parameters to refill dead lanes from a source during a march.
 
-    Every launched ray carries exactly `quantum`, so the deposited total is
-    independent of how launches land across the lanes.
+    Attributes
+    ----------
+    sources
+        The emission distribution of the new rays.
+    budget
+        The total number of rays to launch, including the first batch.
+    quantum
+        The energy of each new ray.
+    interval
+        The number of steps between refills.
     """
 
     sources: Sources
@@ -55,7 +99,19 @@ class Launch(eqx.Module):
 
 
 class Rays(eqx.Module):
-    """A batch of rays part-way through the mesh."""
+    """A batch of rays in the mesh, one for each lane.
+
+    Attributes
+    ----------
+    cell
+        The cell that contains each ray.
+    state
+        The position and direction of each ray.
+    energy
+        The energy that each ray carries.
+    alive
+        True for each lane that holds a ray in flight.
+    """
 
     cell: Int[Array, " nray"]
     state: RayState
@@ -67,7 +123,30 @@ class Rays(eqx.Module):
 def _refill(
     key: KeyArray, rays: Rays, launched: Index, launch: Launch, scene: Scene, path: Path[Any]
 ) -> tuple[Rays, Index]:
-    """Overwrite dead lanes with fresh rays, up to the remaining budget."""
+    """Put new rays in dead lanes, up to the remaining launch budget.
+
+    Parameters
+    ----------
+    key
+        The PRNG key for the new rays.
+    rays
+        The batch of rays.
+    launched
+        The number of rays launched before this refill.
+    launch
+        The refill parameters.
+    scene
+        The device arrays of the mesh.
+    path
+        The ray kinematics of the run.
+
+    Returns
+    -------
+    rays
+        The batch with new rays in the refilled lanes.
+    launched
+        The number of rays launched after this refill.
+    """
     dead = ~rays.alive
     # Rank among dead lanes, so the budget is spent on a well-defined prefix.
     rank = jnp.cumulative_sum(dead) - 1
@@ -85,7 +164,25 @@ def _refill(
 
 
 class StepResult(NamedTuple):
-    """One cell crossing: where the ray went, and what it left behind."""
+    """The result of one cell crossing of one ray.
+
+    Attributes
+    ----------
+    cell
+        The cell that contains the ray after the step.
+    state
+        The ray after the step.
+    energy
+        The energy that the ray carries after the step.
+    alive
+        True if the ray is still in flight.
+    cell_deposit
+        The energy that the crossed cell absorbs.
+    face
+        The face id of the exit face.
+    face_deposit
+        The energy that the exit face absorbs. Zero at an interior face.
+    """
 
     cell: Index
     state: RayState
@@ -106,7 +203,32 @@ def step(
     state: RayState,
     energy: Scalar,
 ) -> StepResult:
-    """Cross one cell, depositing continuously along the way."""
+    """Move one ray across one cell, and deposit energy along its path.
+
+    Parameters
+    ----------
+    key
+        The PRNG key for a boundary interaction.
+    scene
+        The device arrays of the mesh.
+    path
+        The ray kinematics of the run.
+    interactions
+        The interaction table.
+    absorptivity
+        The absorption coefficient of each cell.
+    cell
+        The cell that contains the ray.
+    state
+        The ray.
+    energy
+        The energy that the ray carries.
+
+    Returns
+    -------
+    result
+        The ray after the step, and the energy it deposited.
+    """
     normal, offset = scene.cells.normal[cell], scene.cells.offset[cell]
     slot, parameter = path.crossing(normal, offset, state)
     # A corner or grazing hit can give a small negative parameter.
@@ -156,14 +278,38 @@ def march(
     launch: Launch | None = None,
     extinction: float = 1e-8,
 ) -> tuple[Rays, Deposit]:
-    """Walk rays until they terminate or `max_steps` runs out.
+    """March a batch of rays until all stop or the step limit is reached.
 
-    `max_steps` is a safety net, not a cost: the batch pays for its longest ray.
-    A step costs O(lanes) rather than O(alive), so pass a `Launch` to refill
-    dead lanes and keep the batch full.
+    Parameters
+    ----------
+    key
+        The PRNG key for the march.
+    rays
+        The first batch of rays.
+    scene
+        The device arrays of the mesh.
+    path
+        The ray kinematics of the run.
+    interactions
+        The interaction table.
+    absorptivity
+        The absorption coefficient of each cell.
+    max_steps
+        The largest number of steps. It is a safety limit: the march stops
+        when all rays stop.
+    launch
+        The parameters to refill dead lanes, or None to march only the first batch.
+    extinction
+        The fraction of the largest initial ray energy below which a ray stops
+        and deposits its remaining energy in its cell. At zero, only rays with
+        no energy stop.
 
-    `extinction` is the share of the launch quantum below which a ray stops,
-    leaving its remainder in the cell it is in. Zero reaps only exact zeros.
+    Returns
+    -------
+    rays
+        The batch at the end of the march. Rays that are still alive hit the step limit.
+    deposit
+        The energy that the rays deposited, and the energy that escaped.
     """
     floor = extinction * jnp.max(rays.energy)
 
@@ -241,17 +387,44 @@ def launch_and_march(
     refill_interval: int = 8,
     extinction: float = 1e-8,
 ) -> tuple[Rays, Deposit]:
-    """Fill every lane from the source, then march until `num_rays` are spent.
+    """Launch rays from the sources and march them until all `num_rays` rays stop.
 
-    `num_rays` is how many rays the answer averages over, and `lanes` how many
-    are in flight at once, defaulting to all of them: a step costs the same
-    whether a lane is alive or dead, so a batch wider than `tuning.device_width`
-    buys no parallelism and is paid for at every step. `max_steps` caps the
-    march as a safety net rather than a budget. `refill_interval` is the gap in
-    steps between refills of the dead lanes, and is worth sweeping on a new
-    problem; sampling costs enough that refilling every step is a loss.
-    `extinction` is the share of a ray's quantum below which it stops, and is
-    what bounds the tail.
+    Parameters
+    ----------
+    key
+        The PRNG key for the run.
+    scene
+        The device arrays of the mesh.
+    path
+        The ray kinematics of the run. It must agree with the geometry of `scene`.
+    interactions
+        The interaction table.
+    absorptivity
+        The absorption coefficient of each cell.
+    sources
+        The emission distribution.
+    num_rays
+        The total number of rays to launch. Each ray carries `sources.total / num_rays`.
+    lanes
+        The number of rays in flight at one time, or None for `num_rays`. A
+        value larger than `num_rays` becomes `num_rays`.
+    max_steps
+        The largest number of steps. It is a safety limit: the march stops
+        when all rays stop.
+    refill_interval
+        The number of steps between refills of dead lanes. The best value
+        changes with the problem.
+    extinction
+        The fraction of the ray energy at launch below which a ray stops and
+        deposits its remaining energy in its cell.
+
+    Returns
+    -------
+    rays
+        The batch at the end of the march. Rays that are still alive hit the step limit.
+    deposit
+        The energy that the rays deposited, and the energy that escaped. With the
+        energy of the live rays, it sums to the energy of all launched rays.
     """
     # A lane past the ray count has no ray to put in it, and would launch one
     # carrying a quantum the budget never counted.

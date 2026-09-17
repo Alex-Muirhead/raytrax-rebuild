@@ -19,10 +19,17 @@ SPATIAL_DIM = 3
 
 
 class RayState(eqx.Module):
-    """A half-line from `position` along `tangent`, having already flown `travel`.
+    """The position and direction of a ray.
 
-    `tangent` is unit in 3D but shorter in 2D, where the deficit stands for the
-    out-of-plane component that is not stored.
+    Attributes
+    ----------
+    position
+        The current position of the ray in the mesh.
+    tangent
+        The in-plane components of the unit 3D direction. In 2D, its magnitude
+        is less than 1 by the out-of-plane component.
+    travel
+        The 3D distance that the ray has flown since launch.
     """
 
     position: Float[Array, "... ndim"]
@@ -31,50 +38,129 @@ class RayState(eqx.Module):
 
 
 class LinearState(RayState):
-    """Adds the tangent's magnitude, fixed for the life of the ray."""
+    """The state of a straight ray.
+
+    Attributes
+    ----------
+    speed
+        The magnitude of `tangent`, which is constant for the life of the ray.
+    """
 
     speed: Float[Array, "..."]
 
 
 class HyperbolicState(RayState):
-    """Adds the angular momentum about the axis, conserved along the ray and through a bounce."""
+    """The state of a ray in the (x, r) half-plane of an axisymmetric mesh.
 
-    # Specific, so a radius times an azimuthal speed rather than a true moment.
+    Attributes
+    ----------
+    angular_momentum
+        The radius times the magnitude of the azimuthal component of the unit
+        direction. It is constant along the ray and through a reflection.
+    """
+
     angular_momentum: Float[Array, "..."]
 
 
 class Path[S: RayState](eqx.Module):
-    """Ray kinematics: how a ray crosses a cell, and how far that really is.
+    """The ray kinematics: how a ray crosses a cell, and the distance it flies.
 
-    Directions are drawn in 3D and reduced by `launch`, which is also where a
-    mode picks up whatever it conserves.
+    All methods are classmethods. A subclass holds no state.
     """
 
     # Classmethods: a mode holds no state, and anything that varies between
     # modes is class data. Dispatch is still on the instance's type.
     @classmethod
     def isotropic(cls, key: KeyArray) -> Float[Array, " 3"]:
-        """A 3D direction uniform on the sphere."""
+        """Sample a 3D direction uniformly on the unit sphere.
+
+        Parameters
+        ----------
+        key
+            The PRNG key for the sample.
+
+        Returns
+        -------
+        direction
+            A 3D unit vector.
+        """
         return sphere(key, SPATIAL_DIM)
 
     @classmethod
     def lambertian(cls, key: KeyArray, normal: Vector) -> Float[Array, " 3"]:
-        """A 3D cosine-weighted direction about an in-plane normal."""
+        """Sample a 3D cosine-weighted direction about an in-plane normal.
+
+        Parameters
+        ----------
+        key
+            The PRNG key for the sample.
+        normal
+            The in-plane unit normal at the center of the hemisphere.
+
+        Returns
+        -------
+        direction
+            A 3D unit vector in the hemisphere of `normal`.
+        """
         return cosine_hemisphere(key, jnp.pad(normal, (0, SPATIAL_DIM - normal.shape[-1])))
 
     @classmethod
     def simplex_point(cls, key: KeyArray, corners: Float[Array, "ncorner ndim"]) -> Vector:
-        """A point uniform over the simplex spanned by `corners`."""
+        """Sample a point uniformly in the simplex that the corners make.
+
+        The density is uniform in the volume that the mesh represents, which is
+        not always the plane of the mesh.
+
+        Parameters
+        ----------
+        key
+            The PRNG key for the sample.
+        corners
+            The corner positions of the simplex.
+
+        Returns
+        -------
+        point
+            A position in the simplex.
+        """
         return simplex(key, corners.shape[0] - 1) @ corners
 
     @classmethod
     @abc.abstractmethod
     def launch(cls, position: Vector, direction: Float[Array, " 3"], travel: Scalar) -> S:
-        """Reduce a 3D direction into a ray state at `position`."""
+        """Make a ray state from a position and a 3D direction.
+
+        Parameters
+        ----------
+        position
+            The start position of the ray in the mesh.
+        direction
+            The 3D unit direction of the ray.
+        travel
+            The distance that the ray has already flown.
+
+        Returns
+        -------
+        state
+            The ray state.
+        """
 
     @classmethod
     def reflect(cls, state: S, normal: Vector) -> S:
-        """Mirror the tangent about an outward unit normal."""
+        """Reflect a ray as in a mirror.
+
+        Parameters
+        ----------
+        state
+            The ray at the mirror.
+        normal
+            The in-plane unit normal of the mirror.
+
+        Returns
+        -------
+        state
+            The ray after the reflection.
+        """
         # A wall leaves the radius alone and preserves `|tangent|`, so both the
         # speed and the angular momentum survive untouched; only the tangent moves.
         tangent = state.tangent - 2 * (state.tangent @ normal) * normal
@@ -83,22 +169,51 @@ class Path[S: RayState](eqx.Module):
     @classmethod
     @abc.abstractmethod
     def crossing(cls, normal: Normals, offset: Offsets, state: S) -> tuple[Index, Scalar]:
-        """The slot the ray leaves through, and the parameter at which it does."""
+        """Find the face slot through which a ray leaves a cell.
+
+        Parameters
+        ----------
+        normal
+            The outward unit normal of each face slot of the cell.
+        offset
+            The plane constant of each face slot of the cell.
+        state
+            The ray in the cell.
+
+        Returns
+        -------
+        slot
+            The face slot through which the ray leaves.
+        parameter
+            The path parameter at the exit, for `advance`. It is not always a distance.
+        """
 
     @classmethod
     @abc.abstractmethod
     def advance(cls, state: S, parameter: Scalar) -> tuple[S, Scalar]:
-        """Step the ray forward by `parameter`, returning the new state and the 3D length flown.
+        """Move a ray forward along its path.
 
-        The length is exact. Differencing `travel` across the step recovers the
-        same number by cancellation and loses its low bits once `travel` grows.
+        Parameters
+        ----------
+        state
+            The ray before the move.
+        parameter
+            The path parameter of the move, as `crossing` gives it.
+
+        Returns
+        -------
+        state
+            The ray after the move.
+        flown
+            The 3D distance of the move. Use this value, not the difference in
+            `travel`, which is less accurate.
         """
 
 
 class LinearPath(Path[LinearState]):
-    """Straight rays: through a 3D mesh, or through a 2D one read as extruded.
+    """The kinematics of straight rays, in a 3D mesh or an extruded 2D mesh.
 
-    The crossing parameter is already the 3D distance flown.
+    The crossing parameter is the 3D distance.
     """
 
     @classmethod
@@ -137,10 +252,11 @@ class LinearPath(Path[LinearState]):
 
 
 class AxisymmetricPath(Path[HyperbolicState]):
-    """Revolved rays: a 2D mesh read as the `(x, r)` half-plane.
+    """The kinematics of rays in an axisymmetric mesh, as the (x, r) half-plane.
 
-    A straight 3D ray projects to a hyperbola. The crossing parameter is a step
-    in the hyperbola's own parameter, not a distance; `advance` converts it.
+    A straight 3D ray is a hyperbola in the half-plane. The crossing parameter
+    is a step in the parameter of the hyperbola, not a distance. Use it with a
+    revolved geometry.
     """
 
     @classmethod
@@ -168,11 +284,25 @@ class AxisymmetricPath(Path[HyperbolicState]):
     @classmethod
     @jax.named_scope("frame")
     def frame(cls, state: HyperbolicState) -> tuple[Vector, Vector, Scalar, Scalar]:
-        """The two asymptote directions, and how far along each the ray currently sits.
+        """Give the asymptote directions of the hyperbola of a ray, and the ray coordinates on them.
 
-        The parametrisation is anchored so the ray sits at `v = 1`; a frame
-        pinned to the hyperbola's centre instead loses the position to
-        cancellation whenever that centre is far away.
+        The ray is at the parameter value `v = 1`.
+
+        Parameters
+        ----------
+        state
+            The ray.
+
+        Returns
+        -------
+        forward
+            The direction of the outgoing asymptote.
+        backward
+            The direction of the incoming asymptote.
+        forward_length
+            The coordinate of the ray along the outgoing asymptote.
+        backward_length
+            The coordinate of the ray along the incoming asymptote.
         """
         axial_speed, radial_speed = state.tangent[AXIAL], state.tangent[RADIAL]
         # The central-force split: radial motion plus the centrifugal share.
@@ -188,12 +318,25 @@ class AxisymmetricPath(Path[HyperbolicState]):
     @classmethod
     @jax.named_scope("asymptote_coordinates")
     def asymptote_coordinates(cls, state: HyperbolicState, eccentricity: Scalar) -> tuple[Scalar, Scalar]:
-        """How far along the outgoing and incoming asymptotes the ray sits.
+        """Give the ray coordinates on the outgoing and incoming asymptotes of its hyperbola.
 
-        Both are built as a magnitude-ordered pair first. Only the sum of like
-        signs survives a ray that nearly meets the axis, so the larger comes
-        from that sum and the smaller from the product the two always make.
+        Parameters
+        ----------
+        state
+            The ray.
+        eccentricity
+            The eccentricity of the hyperbola.
+
+        Returns
+        -------
+        forward_length
+            The coordinate of the ray along the outgoing asymptote.
+        backward_length
+            The coordinate of the ray along the incoming asymptote.
         """
+        # Built as a magnitude-ordered pair first. Only the sum of like signs
+        # survives a ray that nearly meets the axis, so the larger comes from
+        # that sum and the smaller from the product the two always make.
         radial_speed, radius = state.tangent[RADIAL], state.position[RADIAL]
         linear_eccentricity = state.angular_momentum * eccentricity**2
         larger = radius * eccentricity * (1 + jnp.abs(radial_speed) * eccentricity)

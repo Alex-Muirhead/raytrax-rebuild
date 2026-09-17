@@ -13,10 +13,17 @@ NULL_HALFSPACE = 0.0
 
 
 class Simplices(eqx.Module):
-    """A decomposition into simplices with weights summing to 1, for sampling.
+    """A decomposition of each cell or face into simplices, for sampling.
 
-    `apex` is the extra corner every simplex spans from, and is absent where the
-    stored vertices already span them.
+    Attributes
+    ----------
+    vertices
+        The mesh vertex ids of each simplex.
+    weight
+        The measure fraction of each simplex. Each row sums to 1.
+    apex
+        The position of a corner that all simplices of a row share, or None if
+        `vertices` holds all corners.
     """
 
     vertices: Int[Array, "n nsimplex ndim"]
@@ -25,14 +32,27 @@ class Simplices(eqx.Module):
 
     @property
     def width(self) -> int:
-        """Spatial dimension. A simplex spans it with `ndim` vertices plus the apex."""
+        """The spatial dimension of the simplices."""
         return self.vertices.shape[-1]
 
 
 class CellTable(eqx.Module):
-    """Per-cell arrays, padded to a fixed number of face slots."""
+    """The device arrays of each cell, padded to a fixed number of face slots.
 
-    # Half-space form of every cell, already signed outward.
+    Attributes
+    ----------
+    normal
+        The outward unit normal of each face slot. A padded slot has a zero normal.
+    offset
+        The plane constant of each face slot, such that `normal . x = offset` on the face.
+    neighbour
+        The cell on the other side of each face slot, or a negative value at the boundary.
+    face
+        The face id of each face slot.
+    interior
+        The simplex decomposition of each cell volume.
+    """
+
     normal: Float[Array, "ncell nslot ndim"]
     offset: Float[Array, "ncell nslot"]
     neighbour: Int[Array, "ncell nslot"]
@@ -42,7 +62,20 @@ class CellTable(eqx.Module):
 
 
 class FaceTable(eqx.Module):
-    """Per-face arrays. `normal` is outward from column 0 of `cells`."""
+    """The device arrays of each face.
+
+    Attributes
+    ----------
+    normal
+        The unit normal of each face, out of the cell in column 0 of `cells`.
+    cells
+        The two cells on each side of each face. `EXTERIOR` replaces a cell
+        that does not exist.
+    group
+        The boundary group index of each face.
+    surface
+        The simplex decomposition of each face area.
+    """
 
     normal: Float[Array, "nface ndim"]
     cells: Int[Array, "nface 2"]
@@ -52,10 +85,24 @@ class FaceTable(eqx.Module):
 
 
 class Scene(eqx.Module):
-    """Device-side arrays: exactly what the ray march touches, nothing else.
+    """The device arrays that the ray march uses, and no other data.
 
-    Grouped by leading index, so `cells.normal` and `faces.normal` cannot be
-    confused. They are not the mesh: slots are padded and the signs are baked in.
+    The arrays are not the mesh: the face slots have padding, and the normals
+    point out of each cell.
+
+    Attributes
+    ----------
+    cells
+        The arrays of each cell.
+    faces
+        The arrays of each face.
+    vertices
+        The position of each mesh vertex.
+
+    Raises
+    ------
+    ValueError
+        If the tables do not all have the spatial dimension of `vertices`.
     """
 
     cells: CellTable
@@ -78,14 +125,32 @@ class Scene(eqx.Module):
 
     @property
     def num_cells(self) -> int:
+        """The number of cells."""
         return self.cells.neighbour.shape[0]
 
     @property
     def num_faces(self) -> int:
+        """The number of faces."""
         return self.faces.group.shape[0]
 
 
 def build(topology: MeshTopology, geometry: MeshGeometry, groups: BoundaryGroups | None = None) -> Scene:
+    """Put a host-side mesh into padded device arrays.
+
+    Parameters
+    ----------
+    topology
+        The connectivity of the mesh.
+    geometry
+        The geometry of the mesh. For an axisymmetric run, give the revolved geometry.
+    groups
+        The boundary groups of the mesh, or None to put all faces in group 0.
+
+    Returns
+    -------
+    scene
+        The device arrays.
+    """
     slot = np.maximum(topology.cell_faces, 0)
     valid = topology.cell_face_valid
     sign = topology.cell_face_signs
@@ -124,7 +189,23 @@ def build(topology: MeshTopology, geometry: MeshGeometry, groups: BoundaryGroups
 
 
 def validate(topology: MeshTopology, geometry: MeshGeometry, *, flatness: float = 1e-8) -> None:
-    """Raise if the mesh breaks an assumption the half-space march relies on."""
+    """Make sure that the mesh agrees with the half-space model of the march.
+
+    Parameters
+    ----------
+    topology
+        The connectivity of the mesh.
+    geometry
+        The geometry of the mesh.
+    flatness
+        The largest permitted deviation of a face from its plane, relative to the face size.
+
+    Raises
+    ------
+    ValueError
+        If a cell has a volume that is not positive, a cell is not convex or is
+        inverted, a face is warped, or a cell centroid is not inside its cell.
+    """
     if np.any(geometry.cells.volume <= 0):
         raise ValueError(f"{np.sum(geometry.cells.volume <= 0)} cells have non-positive volume")
     if np.any(geometry.cells.simplex_weight < 0):
@@ -148,10 +229,24 @@ def validate(topology: MeshTopology, geometry: MeshGeometry, *, flatness: float 
 def contains(
     scene: Scene, cell: Int[Array, "..."], point: Float[Array, "... ndim"], tolerance: float = 0.0
 ) -> Bool[Array, "..."]:
-    """Whether a point lies inside a cell's half-spaces.
+    """Find if a point is inside the half-spaces of a cell.
 
-    A point left on a shared face by a crossing needs a tolerance to count as
-    inside.
+    Parameters
+    ----------
+    scene
+        The device arrays of the mesh.
+    cell
+        The cell index.
+    point
+        The position to examine.
+    tolerance
+        The largest distance outside a face that counts as inside. A point that
+        a crossing puts on a face needs a positive tolerance.
+
+    Returns
+    -------
+    inside
+        True if the point is inside the cell.
     """
     distance = jnp.einsum("...sd,...d->...s", scene.cells.normal[cell], point) - scene.cells.offset[cell]
     return jnp.all(distance <= tolerance, axis=-1)

@@ -13,7 +13,19 @@ from raytrax.mesh import boundaries, geometry, topology
 
 @dataclass(frozen=True)
 class Mesh:
-    """A mesh read from file, with enough provenance to write results back."""
+    """A mesh read from a file, with the data necessary to write results back.
+
+    Attributes
+    ----------
+    topology
+        The connectivity of the cells of highest dimension.
+    geometry
+        The geometry of those cells and their faces.
+    groups
+        The boundary groups from the tagged lower-dimensional blocks.
+    source
+        The mesh as meshio read it.
+    """
 
     topology: topology.MeshTopology
     geometry: geometry.MeshGeometry
@@ -21,7 +33,23 @@ class Mesh:
     source: meshio.Mesh
 
     def cell_data(self, name: str) -> np.ndarray:
-        """Read a cell field, concatenated in the same order as our cells."""
+        """Read a cell field from the file.
+
+        Parameters
+        ----------
+        name
+            The name of the cell field.
+
+        Returns
+        -------
+        values
+            The value of the field for each cell, in the cell order of `topology`.
+
+        Raises
+        ------
+        ValueError
+            If the file has no cell field with that name.
+        """
         if name not in self.source.cell_data_dict:
             raise ValueError(f"No cell field named {name!r}, have: {', '.join(self.source.cell_data_dict)}")
         blocks = self.source.cell_data_dict[name]
@@ -30,7 +58,26 @@ class Mesh:
 
 
 def read(path: str | Path) -> Mesh:
-    """Read a mesh, keeping only cells of its highest dimension."""
+    """Read a mesh from a file.
+
+    Only the cells of the highest dimension become cells. Tagged blocks of
+    lower dimension become boundary groups.
+
+    Parameters
+    ----------
+    path
+        The path of a mesh file in a format that meshio reads.
+
+    Returns
+    -------
+    mesh
+        The mesh, with its topology, geometry and boundary groups.
+
+    Raises
+    ------
+    ValueError
+        If the file contains no supported cell type.
+    """
     # meshio chatters on stdout for some formats.
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured):
@@ -54,7 +101,20 @@ def read(path: str | Path) -> Mesh:
 
 
 def _face_groups(mesh_topology: topology.MeshTopology, source: meshio.Mesh) -> dict[str, np.ndarray]:
-    """Map tagged face blocks of a meshio mesh onto our face ids."""
+    """Find the face ids of each tagged face set in a meshio mesh.
+
+    Parameters
+    ----------
+    mesh_topology
+        The mesh that contains the faces.
+    source
+        The meshio mesh that holds the face blocks and their cell sets.
+
+    Returns
+    -------
+    groups
+        The face ids of each named set.
+    """
     groups: dict[str, np.ndarray] = {}
     face_names = {FACE_ELEMENT_NAMES[count] for count in np.unique(mesh_topology.face_num_verts)}
 
@@ -70,7 +130,17 @@ def _face_groups(mesh_topology: topology.MeshTopology, source: meshio.Mesh) -> d
 
 
 def write(path: str | Path, mesh: Mesh, cell_data: dict[str, np.ndarray]) -> None:
-    """Write the mesh back out with extra cell fields, split by original block."""
+    """Write a mesh to a file, with added cell fields.
+
+    Parameters
+    ----------
+    path
+        The path of the output file. Its extension sets the format.
+    mesh
+        The mesh to write, in its original cell blocks.
+    cell_data
+        The value of each field for each cell, in the cell order of `mesh.topology`.
+    """
     # Annotated because meshio's `cells` parameter is an invariant list.
     blocks: list[meshio.CellBlock | tuple[str, ArrayLike]] = [
         (element.name, mesh.topology.cell_vertices[mesh.topology.cell_block == index, : element.num_vertices])

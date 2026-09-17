@@ -15,19 +15,37 @@ from raytrax.shapes import Flag, Index, KeyArray, Scalar, Vector
 
 
 class Kind(IntEnum):
-    """What a ray does when it reaches a boundary group."""
+    """The action of a ray when it hits a face of a boundary group.
 
-    ESCAPE = 0  # Leaves the domain, carrying its remaining energy away
-    ABSORB = 1  # Terminates, depositing its remaining energy on the exit face
-    SPECULAR = 2  # Mirrors about the face normal
-    DIFFUSE = 3  # Resamples a Lambertian direction back into the domain
+    Attributes
+    ----------
+    ESCAPE
+        The ray leaves the domain and takes its remaining energy with it.
+    ABSORB
+        The ray stops and deposits its remaining energy on the face.
+    SPECULAR
+        The ray reflects as in a mirror about the face normal.
+    DIFFUSE
+        The ray goes back into the domain in a new Lambertian direction.
+    """
+
+    ESCAPE = 0
+    ABSORB = 1
+    SPECULAR = 2
+    DIFFUSE = 3
 
 
 class Interactions(eqx.Module):
-    """Per-boundary-group parameters, indexed by group id.
+    """The boundary parameters of each group, by group index.
 
-    `kind` is static: `apply` reads it at trace time to decide which branches
-    exist at all, so changing one recompiles.
+    Attributes
+    ----------
+    kind
+        The interaction of each group. This field is static, so a change to it
+        causes a recompile.
+    reflectivity
+        The fraction of the energy that each group reflects. Only `SPECULAR`
+        and `DIFFUSE` groups use it; the face absorbs the remainder.
     """
 
     kind: tuple[Kind, ...] = eqx.field(static=True)
@@ -39,7 +57,28 @@ def build(
     kinds: Mapping[str, Kind],
     reflectivity: Mapping[str, float] = MappingProxyType({}),
 ) -> Interactions:
-    """Assemble the interaction table. Groups left out escape."""
+    """Make the interaction table for a set of boundary groups.
+
+    Parameters
+    ----------
+    groups
+        The boundary groups of the mesh.
+    kinds
+        The interaction of each named group. A group that is not in this map escapes.
+    reflectivity
+        The reflectivity of each named group. A group that is not in this map has
+        a reflectivity of 1.
+
+    Returns
+    -------
+    interactions
+        The interaction table, by group index.
+
+    Raises
+    ------
+    ValueError
+        If a name is not a group of the mesh.
+    """
     kind = np.full(len(groups.names), Kind.ESCAPE, dtype=np.int64)
     rho = np.ones(len(groups.names))
 
@@ -60,9 +99,31 @@ def apply(
     state: RayState,
     normal: Vector,
 ) -> tuple[RayState, Scalar, Flag]:
-    """Resolve a boundary hit into (state, absorbed fraction, terminated).
+    """Apply the interaction of a group to a ray that hits a boundary face.
 
-    `normal` is the outward unit normal of the face the ray left through.
+    Parameters
+    ----------
+    path
+        The ray kinematics of the run.
+    interactions
+        The interaction table.
+    group
+        The group index of the face.
+    key
+        The PRNG key for a diffuse direction.
+    state
+        The ray at the face.
+    normal
+        The unit normal of the face, out of the cell that the ray leaves.
+
+    Returns
+    -------
+    state
+        The ray after the interaction.
+    absorbed
+        The fraction of the ray energy that the face absorbs.
+    terminated
+        True if the ray stops at the face.
     """
     rho = interactions.reflectivity[group]
 

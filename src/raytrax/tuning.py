@@ -26,10 +26,14 @@ OVERSUBSCRIPTION = 4
 
 
 def device_width() -> int | None:
-    """Lanes it takes to keep this device's cores busy, or None if it does not report them.
+    """Give the number of lanes that keeps all cores of the device busy.
 
-    A step costs the same whether a lane is alive or dead, so lanes past this
-    buy no parallelism and are paid for in full at every step of the march.
+    More lanes than this give no more parallelism, but each step pays for all of them.
+
+    Returns
+    -------
+    lanes
+        The lane count, or None if the device does not report its core count.
     """
     cores = getattr(jax.local_devices()[0], "core_count", None)
     if not cores:
@@ -38,10 +42,21 @@ def device_width() -> int | None:
 
 
 def resident_bytes(march: Callable[..., Any], lanes: int, **traced: Any) -> int:
-    """Device bytes `march` holds at its peak when run over `lanes` lanes.
+    """Give the peak device memory of a compiled march.
 
-    `march` is the jitted march to price, and `traced` every argument it takes
-    except the lane count.
+    Parameters
+    ----------
+    march
+        The march, wrapped in `eqx.filter_jit`.
+    lanes
+        The lane count to compile the march for.
+    **traced
+        All other arguments of `march`, by name.
+
+    Returns
+    -------
+    bytes
+        The peak device memory in bytes.
     """
     # pyrefly: ignore[missing-attribute] - it does not model what filter_jit returns
     lowered = march.lower(lanes=lanes, **traced)
@@ -57,16 +72,26 @@ def lane_capacity(
     probe: tuple[int, int] = (1 << 16, 1 << 18),
     **traced: Any,
 ) -> int | None:
-    """The most lanes `march` fits in device memory, or None if the device does not report it.
+    """Give the largest lane count of a march that fits in device memory.
 
-    `march` is the jitted march to price. `fraction` is the share of the pool to
-    fill: the pool XLA reports is a share of the whole card rather than of what
-    is free on it, so the default leaves room for a display or a second process,
-    and a dedicated device can raise it. `probe` is the pair of lane counts
-    compiled to price a lane, and wants to sit above the few MiB a march costs
-    whatever the lane count. `traced` is every argument `march` takes except the
-    lane count, and wants a ray count past the probe widths, so that the refill
-    an automatic lane count always ends up using is compiled in.
+    Parameters
+    ----------
+    march
+        The march, wrapped in `eqx.filter_jit`.
+    fraction
+        The fraction of the free device memory pool to fill. Increase it on a
+        device that has no display and no other process.
+    probe
+        The two lane counts to compile the march for. Both must be large enough
+        that the per-lane memory is more than the fixed memory of the march.
+    **traced
+        All other arguments of `march`, by name. Give a ray count larger than
+        both probe lane counts, so that the compiled march includes the refill.
+
+    Returns
+    -------
+    lanes
+        The lane count, or None if the device does not report its memory.
     """
     stats = jax.local_devices()[0].memory_stats()
     if not stats or stats.get("bytes_limit") is None:
@@ -85,16 +110,32 @@ def autosized[**P, T](
     width: Callable[[], int | None] = device_width,
     floor: int = MIN_LANES,
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
-    """Decorate a callable so that leaving `argname` out sizes it to the device.
+    """Make a decorator that sets a batch width from the device when the caller omits it.
 
-    `argname` is the parameter holding the batch width, by name, so the callable
-    is free to call it whatever it likes. `width` supplies the size when the
-    caller leaves that parameter out or passes None, and a `width` that returns
-    None leaves it out too, for the callable's own default to answer. `floor` is
-    the narrowest width worth retrying at.
+    If the caller gives the width, the callable uses it as given, and an
+    out-of-memory error goes to the caller. If the decorator sets the width, it
+    halves the width and tries again after an out-of-memory error.
 
-    A width the caller passes is used exactly as given, and an overrun on it
-    raises. Only a width this chose is halved and tried again.
+    Parameters
+    ----------
+    argname
+        The name of the parameter that holds the batch width.
+    width
+        A function that gives the batch width. If it gives None, the callable
+        uses its own default.
+    floor
+        The smallest width to try again with. An out-of-memory error at this
+        width goes to the caller.
+
+    Returns
+    -------
+    decorate
+        The decorator.
+
+    Raises
+    ------
+    TypeError
+        If the decorated callable has no parameter named `argname`.
     """
 
     def decorate(function: Callable[P, T]) -> Callable[P, T]:

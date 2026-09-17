@@ -15,7 +15,26 @@ from raytrax.shapes import Index, KeyArray, Vector
 def sample_point(
     key: KeyArray, vertices: Float[Array, "nvert ndim"], simplices: Simplices, row: Index, path: Path[Any]
 ) -> Vector:
-    """Sample a point uniformly over one row's simplex decomposition."""
+    """Sample a point uniformly in one cell or face.
+
+    Parameters
+    ----------
+    key
+        The PRNG key for the sample.
+    vertices
+        The position of each mesh vertex.
+    simplices
+        The simplex decomposition of each cell or face.
+    row
+        The index of the cell or face in `simplices`.
+    path
+        The ray kinematics, which sets the point density.
+
+    Returns
+    -------
+    point
+        A position in the cell or face.
+    """
     key_simplex, key_barycentric = jax.random.split(key)
     index = jax.random.choice(key_simplex, simplices.weight.shape[1], p=simplices.weight[row])
     corners = vertices[simplices.vertices[row, index]]
@@ -25,10 +44,20 @@ def sample_point(
 
 
 class Sources(eqx.Module):
-    """Unnormalised emitted power from cell volumes and from boundary faces.
+    """The emitted power of the cells and of the boundary faces.
 
-    Both are in the same units, so a single draw over `cumulative` picks between
-    them.
+    Attributes
+    ----------
+    cell_power
+        The power that each cell emits.
+    face_power
+        The power that each emitting face emits, in the same units as `cell_power`.
+    face
+        The face id of each emitting face.
+    cumulative
+        The cumulative distribution over the cells, then the emitting faces.
+    total
+        The sum of all emitted power.
     """
 
     cell_power: Float[Array, " ncell"]
@@ -39,6 +68,23 @@ class Sources(eqx.Module):
 
 
 def build(cell_power: ArrayLike, face_power: ArrayLike | None = None, face: ArrayLike | None = None) -> Sources:
+    """Make the emission distribution from the power of cells and faces.
+
+    Parameters
+    ----------
+    cell_power
+        The power that each cell emits.
+    face_power
+        The power that each emitting face emits, in the same units as
+        `cell_power`. None for no surface emission.
+    face
+        The face id of each entry of `face_power`. Each face must be on the boundary.
+
+    Returns
+    -------
+    sources
+        The emission distribution.
+    """
     cell_power = jnp.asarray(cell_power)
     face_power = jnp.zeros(0) if face_power is None else jnp.asarray(face_power)
     face = jnp.zeros(0, dtype=int) if face is None else jnp.asarray(face)
@@ -55,10 +101,28 @@ def build(cell_power: ArrayLike, face_power: ArrayLike | None = None, face: Arra
 
 
 def sample(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any]) -> tuple[RayState, Index]:
-    """Draw one ray from the combined volume and surface emission.
+    """Sample one ray from the volume and surface emission.
 
-    Volume emission is isotropic; surface emission is cosine-weighted about the
-    inward normal.
+    A ray from a cell has an isotropic direction. A ray from a face has a
+    cosine-weighted direction about the inward normal.
+
+    Parameters
+    ----------
+    key
+        The PRNG key for the sample.
+    sources
+        The emission distribution.
+    scene
+        The device arrays of the mesh.
+    path
+        The ray kinematics of the run.
+
+    Returns
+    -------
+    state
+        The new ray, with zero travel.
+    cell
+        The cell that contains the start position of the ray.
     """
     key_source, key_point, key_direction = jax.random.split(key, 3)
     num_cells = sources.cell_power.shape[0]

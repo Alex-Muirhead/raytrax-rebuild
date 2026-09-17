@@ -9,45 +9,130 @@ from raytrax.mesh.topology import MeshTopology, cell_face_vertices
 
 @dataclass(frozen=True)
 class FaceGeometry:
+    """The geometry of each face.
+
+    Attributes
+    ----------
+    centroid
+        The centroid of each face.
+    area
+        The area of each face. In 2D, the length of each edge.
+    normal
+        The unit normal of each face, out of the cell in column 0 of `MeshTopology.face_cells`.
+    offset
+        The plane constant of each face, such that `normal . x = offset` on the face.
+    flatness
+        The largest deviation of each face from its plane, relative to the face size.
+    fan_vertices
+        The vertex ids of the simplices that make each face.
+    fan_weight
+        The area fraction of each simplex. Each row sums to 1.
+    """
+
     centroid: Float[np.ndarray, "nface dim"]
     area: Float[np.ndarray, " nface"]
-    normal: Float[np.ndarray, "nface dim"]  # unit, outward from face_cells[:, 0]
-    offset: Float[np.ndarray, " nface"]  # plane constant, normal . x = offset
-    flatness: Float[np.ndarray, " nface"]  # deviation relative to face size
-    fan_vertices: Int[np.ndarray, "nface nfan dim"]  # vertex ids of a simplex fan
-    fan_weight: Float[np.ndarray, "nface nfan"]  # area fractions, rows sum to 1
+    normal: Float[np.ndarray, "nface dim"]
+    offset: Float[np.ndarray, " nface"]
+    flatness: Float[np.ndarray, " nface"]
+    fan_vertices: Int[np.ndarray, "nface nfan dim"]
+    fan_weight: Float[np.ndarray, "nface nfan"]
 
 
 @dataclass(frozen=True)
 class CellGeometry:
+    """The geometry of each cell.
+
+    Attributes
+    ----------
+    volume
+        The volume of each cell. In 2D, the area of each cell.
+    centroid
+        The centroid of each cell.
+    seed
+        An interior point of each cell, which is a corner of all its simplices.
+    simplex_vertices
+        The vertex ids of the other corners of each simplex, with -1 where the
+        simplex is not used.
+    simplex_weight
+        The volume fraction of each simplex. Each row sums to 1. A negative
+        weight shows a cell that is not convex or is inverted.
+    """
+
     volume: Float[np.ndarray, " ncell"]
     centroid: Float[np.ndarray, "ncell dim"]
-    seed: Float[np.ndarray, "ncell dim"]  # interior point every simplex spans from
-    simplex_vertices: Int[np.ndarray, "ncell nsimplex dim"]  # vertex ids, -1 where unused
-    simplex_weight: Float[np.ndarray, "ncell nsimplex"]  # volume fractions, rows sum to 1
+    seed: Float[np.ndarray, "ncell dim"]
+    simplex_vertices: Int[np.ndarray, "ncell nsimplex dim"]
+    simplex_weight: Float[np.ndarray, "ncell nsimplex"]
 
 
 @dataclass(frozen=True)
 class MeshGeometry:
+    """The geometry of a mesh.
+
+    Attributes
+    ----------
+    vertices
+        The position of each vertex.
+    faces
+        The geometry of each face.
+    cells
+        The geometry of each cell.
+    """
+
     vertices: Float[np.ndarray, "nvert dim"]
     faces: FaceGeometry
     cells: CellGeometry
 
 
 def _fan(points: Float[np.ndarray, "n k dim"]) -> Float[np.ndarray, "n nfan 3 dim"]:
-    """Split each polygon into triangles about its first vertex."""
+    """Divide each polygon into triangles that share its first vertex.
+
+    Parameters
+    ----------
+    points
+        The corner positions of each polygon, in winding order.
+
+    Returns
+    -------
+    triangles
+        The corner positions of each triangle of each polygon.
+    """
     num_verts = points.shape[-2]
     return np.stack([points[:, [0, j, j + 1]] for j in range(1, num_verts - 1)], axis=1)
 
 
 def _triangle_normals(points: Float[np.ndarray, "... 3 dim"]) -> Float[np.ndarray, "... dim"]:
-    """Half the cross product of each triangle's edges: normal with area magnitude."""
+    """Give the area vector of each triangle.
+
+    Parameters
+    ----------
+    points
+        The corner positions of each triangle, in 3D.
+
+    Returns
+    -------
+    normal
+        The normal of each triangle by the right-hand rule, with a magnitude equal to its area.
+    """
     ref, u, v = np.unstack(points, axis=-2)
     return np.cross(u - ref, v - ref) / 2
 
 
 def face_geometry(topology: MeshTopology, vertices: np.ndarray) -> FaceGeometry:
-    """Plane, area and centroid of every face, from its canonical winding."""
+    """Calculate the plane, area, centroid and simplex decomposition of each face.
+
+    Parameters
+    ----------
+    topology
+        The connectivity of the mesh.
+    vertices
+        The position of each vertex, with `topology.dim` columns.
+
+    Returns
+    -------
+    faces
+        The geometry of each face.
+    """
     num_faces, dim = topology.num_faces, topology.dim
     max_fan = 1 if dim == 2 else topology.face_vertices.shape[1] - 2
 
@@ -109,10 +194,19 @@ def face_geometry(topology: MeshTopology, vertices: np.ndarray) -> FaceGeometry:
 
 
 def cell_geometry(topology: MeshTopology, vertices: np.ndarray) -> CellGeometry:
-    """Volume, centroid and a simplex decomposition of every cell.
+    """Calculate the volume, centroid and simplex decomposition of each cell.
 
-    A simplex has positive volume exactly when the cell is convex and correctly
-    oriented, which `scene.validate` checks.
+    Parameters
+    ----------
+    topology
+        The connectivity of the mesh.
+    vertices
+        The position of each vertex, with `topology.dim` columns.
+
+    Returns
+    -------
+    cells
+        The geometry of each cell.
     """
     dim = topology.dim
     valid = topology.cell_face_valid
@@ -153,6 +247,20 @@ def cell_geometry(topology: MeshTopology, vertices: np.ndarray) -> CellGeometry:
 
 
 def build(topology: MeshTopology, vertices: np.ndarray) -> MeshGeometry:
+    """Calculate the geometry of a mesh.
+
+    Parameters
+    ----------
+    topology
+        The connectivity of the mesh.
+    vertices
+        The position of each vertex. Columns past `topology.dim` are ignored.
+
+    Returns
+    -------
+    geometry
+        The geometry of the vertices, faces and cells.
+    """
     vertices = np.asarray(vertices, dtype=float)[:, : topology.dim]
     return MeshGeometry(
         vertices=vertices,
@@ -162,11 +270,29 @@ def build(topology: MeshTopology, vertices: np.ndarray) -> MeshGeometry:
 
 
 def revolve(geometry: MeshGeometry, radial: int = 1) -> MeshGeometry:
-    """Reweight an (x, r) mesh as the solid it sweeps out when revolved.
+    """Change the geometry of an (x, r) mesh to that of its solid of revolution.
 
-    Volumes and areas become those of the ring and the surface of revolution,
-    and the decomposition weights with them, so a draw over either is uniform in
-    the revolved solid rather than in the plane. Positions are left in (x, r).
+    Cell volumes and face areas become those of the rings and surfaces that
+    they make when revolved about the axis. The simplex weights change with
+    them, so that a sample is uniform in the revolved solid. The positions stay
+    in (x, r).
+
+    Parameters
+    ----------
+    geometry
+        The planar geometry of a 2D mesh.
+    radial
+        The column of the vertex positions that holds the radius.
+
+    Returns
+    -------
+    geometry
+        The revolved geometry.
+
+    Raises
+    ------
+    ValueError
+        If the mesh is not 2D, a vertex has a negative radius, or a cell is on the axis.
     """
     dim = geometry.vertices.shape[1]
     if dim != 2:

@@ -3,7 +3,20 @@ from jaxtyping import Bool, Int
 
 
 def _lex_less(a: Int[np.ndarray, "n k"], b: Int[np.ndarray, "n k"]) -> Bool[np.ndarray, " n"]:
-    """Row-wise lexicographic comparison of two equally shaped 2D arrays."""
+    """Compare two arrays row by row in lexicographic order.
+
+    Parameters
+    ----------
+    a
+        The left operand.
+    b
+        The right operand, with the same shape as `a`.
+
+    Returns
+    -------
+    less
+        True for each row where `a` is less than `b`.
+    """
     differs = a != b
     first = np.argmax(differs, axis=1)[:, None]
     return differs.any(axis=1) & (
@@ -12,10 +25,22 @@ def _lex_less(a: Int[np.ndarray, "n k"], b: Int[np.ndarray, "n k"]) -> Bool[np.n
 
 
 def canonical_cycle(verts: Int[np.ndarray, "n k"]) -> tuple[Int[np.ndarray, "n k"], Int[np.ndarray, " n"]]:
-    """Canonically wind each face, returning (keys, reversed_bit).
+    """Put the vertices of each face into a canonical winding.
 
-    Two cells sharing a face agree on the key and disagree on the bit. The key
-    keeps a real winding, so face geometry can use it directly.
+    Two cells that share a face get the same key and opposite bits.
+
+    Parameters
+    ----------
+    verts
+        The vertex ids of each face, in the winding of one cell.
+
+    Returns
+    -------
+    keys
+        The vertex ids of each face in canonical winding. Each key is a valid
+        winding of the face, so it is usable for face geometry.
+    reversed_bit
+        1 where the canonical winding is opposite to the input winding, else 0.
     """
     verts = np.asarray(verts)
     _, num_verts = verts.shape
@@ -40,10 +65,34 @@ def lex_unique(
     return_inverse: bool = False,
     return_counts: bool = False,
 ) -> tuple[np.ndarray, ...]:
-    """A stripped-down `numpy.unique` over rows, by lexsort.
+    """Find the unique rows of a 2D array, as `numpy.unique` with `axis=0` does.
 
-    Returns the unique keys, followed by whichever of index, inverse and counts
-    were asked for, in that order.
+    Parameters
+    ----------
+    keys
+        The rows to make unique.
+    return_index
+        Whether to also return the index of the first instance of each unique row.
+    return_inverse
+        Whether to also return the unique row index of each input row.
+    return_counts
+        Whether to also return the number of instances of each unique row.
+
+    Returns
+    -------
+    unique
+        The unique rows, in lexicographic order.
+    index
+        The index in `keys` of each unique row. Only if `return_index`.
+    inverse
+        The index in `unique` of each row of `keys`. Only if `return_inverse`.
+    counts
+        The number of instances of each unique row. Only if `return_counts`.
+
+    Raises
+    ------
+    ValueError
+        If `keys` is not 2D.
     """
     if len(keys.shape) != 2:
         raise ValueError("Keys must be 2 dimensional")

@@ -15,51 +15,97 @@ Block = tuple[str, np.ndarray]
 
 @dataclass(frozen=True)
 class MeshTopology:
-    """Index-only description of a mixed-element mesh.
+    """The connectivity of a mesh with mixed cell types, as indices only.
 
-    Cells are padded to `max_faces` slots, masked by `cell_face_valid`.
+    Each cell has `max_faces` face slots. `cell_face_valid` shows the slots that
+    the cell uses.
+
+    Attributes
+    ----------
+    dim
+        The dimension of the cells.
+    block_elements
+        The cell type of each input block.
+    cell_block
+        The input block index of each cell.
+    cell_vertices
+        The vertex ids of each cell, padded with -1.
+    cell_faces
+        The face id of each face slot, padded with -1.
+    cell_face_signs
+        +1 where the face normal points out of the cell, -1 where it points in,
+        and 0 for padding.
+    cell_neighbours
+        The cell on the other side of each face slot, or a negative value at the boundary.
+    face_vertices
+        The vertex ids of each face in canonical winding, padded with -1.
+    face_cells
+        The two cells on each side of each face. The face normal points out of
+        the cell in column 0. `EXTERIOR` replaces a cell that does not exist.
     """
 
     dim: int
     block_elements: tuple[ElementType, ...]
-    cell_block: Int[np.ndarray, " ncell"]  # which input block a cell came from
-    cell_vertices: Int[np.ndarray, "ncell max_cell_verts"]  # -1 padded
-    cell_faces: Int[np.ndarray, "ncell max_faces"]  # global face id, -1 padded
-    cell_face_signs: Int[np.ndarray, "ncell max_faces"]  # +1 outward, -1 inward, 0 padded
-    cell_neighbours: Int[np.ndarray, "ncell max_faces"]  # cell id or negative sentinel
-    face_vertices: Int[np.ndarray, "nface max_face_verts"]  # canonically wound, -1 padded
-    face_cells: Int[np.ndarray, "nface 2"]  # column 0 sees the stored normal as outward
+    cell_block: Int[np.ndarray, " ncell"]
+    cell_vertices: Int[np.ndarray, "ncell max_cell_verts"]
+    cell_faces: Int[np.ndarray, "ncell max_faces"]
+    cell_face_signs: Int[np.ndarray, "ncell max_faces"]
+    cell_neighbours: Int[np.ndarray, "ncell max_faces"]
+    face_vertices: Int[np.ndarray, "nface max_face_verts"]
+    face_cells: Int[np.ndarray, "nface 2"]
 
     @property
     def num_cells(self) -> int:
+        """The number of cells."""
         return self.cell_faces.shape[0]
 
     @property
     def num_faces(self) -> int:
+        """The number of faces."""
         return self.face_cells.shape[0]
 
     @property
     def max_faces(self) -> int:
+        """The number of face slots of each cell."""
         return self.cell_faces.shape[1]
 
     @property
     def cell_face_valid(self) -> Bool[np.ndarray, "ncell max_faces"]:
-        """Mask of slots a cell actually uses. Derived, so it cannot drift."""
+        """The mask of face slots that each cell uses."""
         return self.cell_faces >= 0
 
     @property
     def face_num_verts(self) -> Int[np.ndarray, " nface"]:
-        """Vertices per face. Derived, so it cannot drift."""
+        """The number of vertices of each face."""
         return np.sum(self.face_vertices >= 0, axis=1)
 
     @property
     def is_boundary(self) -> Bool[np.ndarray, " nface"]:
-        """Mask of faces with only one adjacent cell."""
+        """The mask of faces that have only one adjacent cell."""
         return np.any(self.face_cells < 0, axis=-1)
 
 
 def build(blocks: Sequence[Block]) -> MeshTopology:
-    """Build topology from (element name, connectivity) blocks of one dimension."""
+    """Make the topology of a mesh from its cell blocks.
+
+    Parameters
+    ----------
+    blocks
+        The meshio cell type name and the vertex ids of each cell, for each
+        block. All blocks have cells of the same dimension.
+
+    Returns
+    -------
+    topology
+        The connectivity of the mesh.
+
+    Raises
+    ------
+    ValueError
+        If there are no blocks, the blocks have different dimensions, a block
+        has the wrong number of vertices, or a face has more than two cells or
+        two cells with the same winding.
+    """
     if not blocks:
         raise ValueError("Cannot build a mesh from no cells")
 
@@ -143,11 +189,19 @@ def build(blocks: Sequence[Block]) -> MeshTopology:
 
 
 def cell_face_vertices(topology: MeshTopology) -> np.ndarray:
-    """[ncell, max_faces, max_face_verts] face vertices in each cell's own winding.
+    """Give the vertex ids of each face slot, in the winding of its cell.
 
-    The largest array in the pipeline, so it is rebuilt on demand rather than
-    stored.
+    Parameters
+    ----------
+    topology
+        The connectivity of the mesh.
+
+    Returns
+    -------
+    verts
+        The vertex ids of each face slot of each cell, padded with -1.
     """
+    # The largest array in the pipeline, so it is rebuilt on demand rather than stored.
     max_face_verts = topology.face_vertices.shape[1]
     verts = np.full((topology.num_cells, topology.max_faces, max_face_verts), -1, dtype=np.int64)
 
