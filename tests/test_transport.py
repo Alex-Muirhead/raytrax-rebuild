@@ -5,7 +5,7 @@ import pytest
 from meshes import brick, make, mixed_3d
 from pytest import approx
 
-from raytrax import interactions, sources, transport
+from raytrax import interactions, sources, transport, tuning
 from raytrax import scene as scene_module
 from raytrax.interactions import Kind
 from raytrax.mesh import boundaries, geometry, topology
@@ -263,24 +263,75 @@ class TestRefill:
         assert accounted == approx(float(source.total), rel=1e-6)
 
 
-class TestLaneCapacity:
-    """The estimate reaches through what equinox and XLA return, which nothing
-    else in the suite covers and no type checker can."""
+class TestLaneSizing:
+    """How wide a batch `trace` marches, and the ceiling it must stay under.
+    The ceiling reaches through what equinox and XLA return, which nothing else
+    in the suite covers and no type checker can."""
 
     def case(self):
         blocks, vertices = brick((3, 3, 3))
         _, mesh_geometry, scene = make(blocks, vertices)
         return scene, sources.build(mesh_geometry.cells.volume)
 
-    def test_the_estimate_is_a_width_a_trace_can_be_run_at(self):
+    def traced(self, scene, source):
+        """Everything `launch_and_march` takes except the lane count."""
+        return {
+            "key": jax.random.key(0),
+            "scene": scene,
+            "path": LinearPath(),
+            "interactions": uniform_boundary(Kind.ABSORB),
+            "absorptivity": jnp.full(scene.num_cells, 1.0),
+            "sources": source,
+            "num_rays": 1 << 20,
+            "max_steps": 400,
+            "refill_interval": 8,
+            "extinction": 1e-8,
+        }
+
+    def test_the_ceiling_is_a_width_that_still_fits_the_pool(self):
         scene, source = self.case()
-        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
-        lanes = transport.lane_capacity(*args, source, max_steps=400)
+        traced = self.traced(scene, source)
+        lanes = tuning.lane_capacity(transport.launch_and_march, **traced)
         if lanes is None:
             pytest.skip("the device does not report its memory")
 
-        assert lanes >= transport.MIN_LANES
-        _, deposit = transport.trace(*args, source, num_rays=20_000, lanes=lanes, max_steps=400)
+        assert lanes >= tuning.MIN_LANES
+        # The ceiling is extrapolated from two probe widths, so the check is
+        # that the march XLA compiles at it really does claim to fit.
+        limit = jax.local_devices()[0].memory_stats()["bytes_limit"]
+        assert tuning.resident_bytes(transport.launch_and_march, lanes, **traced) <= limit
+
+    def test_the_default_width_is_the_device_and_not_the_ray_count(self):
+        width = tuning.device_width()
+        if width is None:
+            pytest.skip("the device does not report its cores")
+
+        # A march costs `lanes x steps` whatever is alive, so a batch that grows
+        # with the ray count is what the default exists to prevent.
+        assert tuning.MIN_LANES <= width < 1 << 22
+
+        scene, source = self.case()
+        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
+        rays, deposit = transport.trace(*args, source, num_rays=4 * width, max_steps=400)
+        assert rays.cell.shape == (width,)
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
+
+    def test_a_width_the_caller_passes_is_the_width_marched(self):
+        """Only an automatic width is adapted. A batch the caller sized is run as
+        asked, so an overrun reaches them instead of being narrowed behind them."""
+        scene, source = self.case()
+        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
+        rays, deposit = transport.trace(*args, source, num_rays=20_000, lanes=2_000, max_steps=400)
+        assert rays.cell.shape == (2_000,)
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
+
+    def test_a_width_past_the_ray_count_is_the_ray_count(self):
+        """Every lane is launched, and each ray carries `total / num_rays`, so a
+        lane past the budget would deposit a quantum nobody emitted."""
+        scene, source = self.case()
+        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
+        rays, deposit = transport.trace(*args, source, num_rays=5_000, lanes=20_000, max_steps=400)
+        assert rays.cell.shape == (5_000,)
         assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
 
 

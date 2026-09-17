@@ -8,6 +8,44 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## Lane sizing is a decorator in its own module, not a branch inside `trace`
+
+`zxluwltv`, 2026-09-16
+
+**Why:** Choosing a width is about the device, and marching is about the mesh;
+keeping both in `transport.py` meant every reader of the march stepped over the
+memory analysis first. `tuning.py` imports nothing from the package and names
+the width by argument, so `autosized("lanes")` decorates anything with a batch
+dimension, and `trace = tuning.autosized("lanes")(launch_and_march)` leaves the
+march with one lane count and no policy. Clamping that count to the ray count
+stays in the march, where it is bookkeeping rather than tuning: a lane past the
+budget launches a ray carrying a quantum nobody emitted.
+**Instead of:** A `lanes=None` branch inside `trace`, which also silently
+narrowed a width the caller had chosen; an overrun on a width someone asked for
+is now theirs to see.
+**Cost:** `trace` carries the march's signature rather than one of its own, and
+the decorator binds arguments through `inspect.signature` on every call to find
+the width whether it was passed by name or by position. `lane_capacity` takes
+the callable to price instead of the march's arguments.
+
+## The default lane count is the device's width, not the memory ceiling
+
+`zxluwltv`, 2026-09-16
+
+**Why:** A step is `vmap`ped over every lane, so it costs the same whether the
+lane is alive or dead, and the march costs `lanes x steps`. Sizing the batch by
+memory made `trace` march a million lanes whose mean ray lives 29.6 steps and
+whose longest lives 275: 11 percent utilised, and 10.4 s against 2.1 s at
+`core_count x 2048 x 4` lanes on the same case. Anything from 8k to 64k lanes
+is within 10 percent there, which a count off the hardware lands inside.
+**Instead of:** Keeping the memory ceiling as the target, which measures the
+wrong quantity; or autotuning the width, which costs a compile per probe.
+**Cost:** `THREADS_PER_CORE` is the per-architecture constant the entry below
+set out to avoid, but it is wrong by at most 2x on any recent part and the
+optimum is a decade wide. The memory analysis leaves the default path, so a
+width that does not fit is now found by the `RESOURCE_EXHAUSTED` retry rather
+than predicted; `lane_capacity` stays for a caller that wants the ceiling.
+
 ## The lane count is measured off the compiled march, not configured per GPU
 
 `zlumtxks`, 2026-09-03

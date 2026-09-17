@@ -14,7 +14,7 @@ with app.setup:
     import numpy as np
     from scipy.special import expn
 
-    from raytrax import interactions, sources, transport
+    from raytrax import interactions, sources, transport, tuning
     from raytrax import scene as scene_module
     from raytrax.interactions import Interactions, Kind
     from raytrax.io import vtk
@@ -132,17 +132,9 @@ def prepare(name):
     source = sources.build(jnp.zeros(mesh.topology.num_cells), geom.faces.area[hot], hot)
 
     reference = float(source.total) / geom.cells.volume.sum()
-    # Priced once per case rather than once per trace: the estimate costs two
-    # compiles, and only the shape of the absorptivity reaches them.
-    lanes = transport.lane_capacity(
-        jax.random.key(0),
-        scene,
-        trace_path,
-        table,
-        jnp.ones(mesh.topology.num_cells),
-        source,
-        max_steps=2_000,
-    )
+    # Held on the case so every ray count in the sweep marches the same width,
+    # and the curve is a statement about rays rather than about batches.
+    lanes = tuning.device_width()
     return Case(mesh, geom, scene, trace_path, table, source, reference, lanes)
 
 

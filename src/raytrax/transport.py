@@ -3,20 +3,16 @@ from typing import Any, NamedTuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax.errors import JaxRuntimeError
 from jaxtyping import Array, Bool, Float, Int
 
 from raytrax import interactions as interaction
+from raytrax import tuning
 from raytrax.interactions import Interactions
 from raytrax.paths import Path, RayState
 from raytrax.scene import Scene
 from raytrax.shapes import Flag, Index, KeyArray, Scalar
 from raytrax.sources import Sources
 from raytrax.sources import sample as sample_source
-
-# Narrower than this a batch is not worth marching, so an estimate that has been
-# halved down to it is out of memory for some reason other than its width.
-MIN_LANES = 1 << 12
 
 
 def _keep(mask: Bool[Array, "..."], new: Array, old: Array) -> Array:
@@ -229,7 +225,7 @@ def march(
 
 
 @eqx.filter_jit
-def _launch_and_march(
+def launch_and_march(
     key: KeyArray,
     scene: Scene,
     path: Path[Any],
@@ -237,12 +233,27 @@ def _launch_and_march(
     absorptivity: Float[Array, " ncell"],
     sources: Sources,
     num_rays: int,
-    lanes: int,
-    max_steps: int,
-    refill_interval: int,
-    extinction: float,
+    lanes: int | None = None,
+    max_steps: int = 100_000,
+    refill_interval: int = 8,
+    extinction: float = 1e-8,
 ) -> tuple[Rays, Deposit]:
-    """Fill every lane from the source, then march until `num_rays` are spent."""
+    """Fill every lane from the source, then march until `num_rays` are spent.
+
+    `num_rays` is how many rays the answer averages over, and `lanes` how many
+    are in flight at once, defaulting to all of them: a step costs the same
+    whether a lane is alive or dead, so a batch wider than `tuning.device_width`
+    buys no parallelism and is paid for at every step. `max_steps` caps the
+    march as a safety net rather than a budget. `refill_interval` is the gap in
+    steps between refills of the dead lanes, and is worth sweeping on a new
+    problem; sampling costs enough that refilling every step is a loss.
+    `extinction` is the share of a ray's quantum below which it stops, and is
+    what bounds the tail.
+    """
+    # A lane past the ray count has no ray to put in it, and would launch one
+    # carrying a quantum the budget never counted.
+    lanes = min(num_rays, lanes or num_rays)
+
     key_launch, key_march = jax.random.split(key)
     quantum = sources.total / num_rays
 
@@ -267,119 +278,6 @@ def _launch_and_march(
     )
 
 
-def _resident_bytes(lanes: int, **traced: Any) -> int:
-    """Device bytes one `_launch_and_march` over `lanes` lanes holds at its peak."""
-    # pyrefly: ignore[missing-attribute] - it does not model what filter_jit returns
-    lowered = _launch_and_march.lower(lanes=lanes, **traced)
-    # equinox wraps the jax Compiled; the analyses live on the inner one.
-    compiled = lowered.compile().compiled
-    analysis = compiled.memory_analysis()
-    return analysis.temp_size_in_bytes + analysis.argument_size_in_bytes + analysis.output_size_in_bytes
-
-
-def lane_capacity(
-    key: KeyArray,
-    scene: Scene,
-    path: Path[Any],
-    interactions: Interactions,
-    absorptivity: Float[Array, " ncell"],
-    sources: Sources,
-    max_steps: int = 100_000,
-    refill_interval: int = 8,
-    extinction: float = 1e-8,
-    fraction: float = 0.7,
-    probe: tuple[int, int] = (1 << 16, 1 << 18),
-) -> int | None:
-    """The most lanes this march fits in device memory, or None if the device does not report it.
-
-    `fraction` is the share of the pool to fill. The pool XLA reports is a share
-    of the whole card rather than of what is free on it, so the default leaves
-    room for a display or a second process; raise it on a dedicated device.
-    `probe` is the pair of lane counts compiled to price a lane, and wants to
-    sit above the few MiB a march costs whatever the lane count.
-    """
-    stats = jax.local_devices()[0].memory_stats()
-    if not stats or stats.get("bytes_limit") is None:
-        return None
-    budget = fraction * (stats["bytes_limit"] - stats["bytes_in_use"])
-
-    small, large = probe
-    traced = {
-        "key": key,
-        "scene": scene,
-        "path": path,
-        "interactions": interactions,
-        "absorptivity": absorptivity,
-        "sources": sources,
-        # Any budget past the probe compiles the refill in, which an automatic
-        # lane count always ends up using.
-        "num_rays": 2 * large,
-        "max_steps": max_steps,
-        "refill_interval": refill_interval,
-        "extinction": extinction,
-    }
-    cheap, dear = _resident_bytes(small, **traced), _resident_bytes(large, **traced)
-    per_lane = (dear - cheap) / (large - small)
-    fixed = cheap - per_lane * small
-    return max(MIN_LANES, int((budget - fixed) / per_lane))
-
-
-def trace(
-    key: KeyArray,
-    scene: Scene,
-    path: Path[Any],
-    interactions: Interactions,
-    absorptivity: Float[Array, " ncell"],
-    sources: Sources,
-    num_rays: int,
-    lanes: int | None = None,
-    max_steps: int = 100_000,
-    refill_interval: int = 8,
-    extinction: float = 1e-8,
-) -> tuple[Rays, Deposit]:
-    """Trace `num_rays` rays through `lanes` lanes, refilling as they terminate.
-
-    `lanes` trades memory against occupancy, defaulting to whatever
-    `lane_capacity` says the device holds; an estimate that still runs out of
-    memory is halved and marched again. Pass it explicitly to keep a sweep from
-    paying the estimate's two compiles per call. `refill_interval` is worth
-    sweeping on a new problem; sampling costs enough that refilling every step
-    is a loss. `extinction` is the share of a ray's quantum below which it
-    stops, and is what bounds the tail.
-    """
-    if lanes is None:
-        lanes = lane_capacity(
-            key,
-            scene,
-            path,
-            interactions,
-            absorptivity,
-            sources,
-            max_steps=max_steps,
-            refill_interval=refill_interval,
-            extinction=extinction,
-        )
-    lanes = min(num_rays, lanes or num_rays)
-
-    while True:
-        try:
-            return _launch_and_march(
-                key,
-                scene,
-                path,
-                interactions,
-                absorptivity,
-                sources,
-                num_rays=num_rays,
-                lanes=lanes,
-                max_steps=max_steps,
-                refill_interval=refill_interval,
-                extinction=extinction,
-            )
-        except JaxRuntimeError as error:
-            # XLA reports a share of the whole card, so an estimate can still
-            # meet a display or another process. The answer does not depend on
-            # the lane count, so a narrower batch is the same march.
-            if "RESOURCE_EXHAUSTED" not in str(error) or lanes <= MIN_LANES:
-                raise
-            lanes //= 2
+# The entry point: the same march, with a `lanes` that sizes itself to the
+# device when left out. A lane count passed explicitly is marched as given.
+trace = tuning.autosized("lanes")(launch_and_march)

@@ -65,10 +65,14 @@ NumPy up to `scene.build`, JAX after it:
 Path subclasses are stateless: every method is a classmethod, and per-ray
 constants live in the `RayState` that `launch` builds.
 
-Inside `trace`: `lane_capacity` prices a lane off XLA's memory analysis unless
-`lanes` is passed, launch and march share one `jit`, dead lanes are refilled
+`trace` is `launch_and_march` decorated with `tuning.autosized("lanes")`:
+leaving `lanes` out takes the width from `tuning.device_width` and narrows it
+again on an overrun, while a lane count passed in is marched as given and lets
+the overrun raise. The march clamps whatever it gets to `num_rays`.
+Inside the march, launch and march share one `jit`, dead lanes are refilled
 every `refill_interval` steps, and a ray below the `extinction` share of its
-quantum is stopped and emptied where it stands.
+quantum is stopped and emptied where it stands. `tuning.lane_capacity` is the
+separate memory ceiling, and is no longer on the default path.
 
 ## Documents
 

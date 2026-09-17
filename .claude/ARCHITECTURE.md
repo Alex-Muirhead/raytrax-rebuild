@@ -13,6 +13,8 @@ manageable:
 - `scene.py` - the boundary. `build()` flattens a mesh into padded rectangular
   arrays; everything downstream is JAX.
 - `paths.py`, `medium.py`, `interactions.py`, `sources.py`, `transport.py` - JAX.
+- `tuning.py` - how wide a batch to march, never where a ray goes. It knows
+  about the device, not about the physics, and imports nothing from the package.
 
 ## Physics invariants
 
@@ -92,11 +94,20 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   network of at most three comparisons. The network returns the same doubles.
 - **The energy scatter must stay outside the `vmap`.** Inside it, XLA
   materialises a per-ray copy of the accumulator and memory explodes.
-- **The lane count is what bounds memory, and `trace` sets it from the device.**
-  Everything a march holds is linear in lanes, so a batch as wide as the ray
-  count is unbounded. `lane_capacity` compiles the march at two probe widths
-  and reads XLA's own memory analysis of the result, which is what makes the
-  price of a lane a measurement rather than a guess.
+- **The lane count is set by the device's width, not by the ray count.** A step
+  is `vmap`ped over every lane and costs the same whether that lane is alive or
+  dead, so the march costs `lanes x steps` and lanes past what the cores hold
+  buy no parallelism. `tuning.device_width` is `core_count` times the threads a
+  core keeps resident, oversubscribed; it also bounds memory, which is linear in
+  lanes. `tuning.lane_capacity` still reads XLA's memory analysis for a caller
+  that wants the ceiling, but `trace` no longer marches at it.
+- **`trace` is `launch_and_march` wearing `tuning.autosized("lanes")`.** The
+  decorator is the only place a width is *chosen*: leaving `lanes` out asks for
+  that choice and accepts being narrowed on an overrun, while a lane count the
+  caller passes is marched exactly as given, so the `RESOURCE_EXHAUSTED` reaches
+  them. `launch_and_march` still clamps the width it is given to `num_rays`,
+  which is bookkeeping and not tuning: every lane is launched, and a lane past
+  the budget carries a quantum the source never emitted.
 - **The first batch is drawn inside the same `jit` as the march.** Drawn
   outside it the sampling is a second executable, and its buffers cannot be
   reused as march scratch; on the re-entry case that cost a fifth of the peak.
