@@ -14,11 +14,24 @@ Module layout and the invariants a change must not violate are in
 ## Commands
 
 ```
-uv run pytest
-uv run pytest tests/test_paths.py -k angular_momentum   # one file, one selection
+uv run pytest                                   # everything
+JAX_PLATFORMS=cpu uv run pytest tests/unit      # one function at a time, about 20 s
+uv run pytest tests/unit/test_paths.py -k angular_momentum   # one file, one selection
 uv run ruff format . && uv run ruff check --fix .
 uv run pyrefly check                            # strict over src/, relaxed in tests/examples/scripts
 ```
+
+The suite is split by what a test runs. `tests/unit` calls one function
+(`sample`, `step`, a path's crossing, the mesh builders) and needs no march.
+`tests/integration` runs `march` or `trace` end to end, checking conservation
+and bookkeeping. `tests/verification` compares a full run against an analytic
+solution. The small meshes and `uniform_boundary` are shared from
+`tests/meshes.py`, imported as `tests.meshes`.
+
+Nearly all of the suite's time is XLA compilation, one per mesh shape and per
+static argument, and `JAX_PLATFORMS=cpu` compiles faster than the GPU for these
+small meshes. Wrap a `jax.vmap` in a test in `eqx.filter_jit`: run eagerly, it
+dispatches op by op and costs seconds.
 
 `tests/conftest.py` installs the jaxtyping/beartype import hook, so shape
 annotations are only enforced under pytest. A shape bug can therefore pass in a

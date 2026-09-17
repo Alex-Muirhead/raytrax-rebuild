@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from meshes import brick, brick_sides
 from scipy.special import expn
 
 from raytrax import interactions, sources, transport
@@ -10,6 +9,7 @@ from raytrax.interactions import Kind
 from raytrax.mesh import boundaries, geometry, topology
 from raytrax.paths import LinearPath
 from raytrax.scene import build as build_scene
+from tests.meshes import brick, brick_sides
 
 
 @pytest.mark.parametrize("dim", [3, 2])

@@ -1,33 +1,25 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from meshes import brick, make, mixed_3d
 from pytest import approx
 
-from raytrax import interactions, sources, transport, tuning
 from raytrax import scene as scene_module
+from raytrax import sources, transport, tuning
 from raytrax.interactions import Kind
 from raytrax.mesh import boundaries, geometry, topology
 from raytrax.paths import AxisymmetricPath, LinearPath
-from raytrax.scene import contains
+from tests.meshes import brick, make, mixed_3d, uniform_boundary
 
-
-def emit_from_volume(scene, mesh_geometry):
-    return sources.build(mesh_geometry.cells.volume)
-
-
-def uniform_boundary(kind, reflectivity=1.0):
-    """One implicit group covering every boundary face."""
-    return interactions.Interactions(kind=(Kind(kind),), reflectivity=jnp.array([reflectivity]))
+# Jitted so that a vmap over many rays compiles once rather than dispatching op by op.
+sample = eqx.filter_jit(jax.vmap(sources.sample, in_axes=(0, None, None, None)))
 
 
 def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None, **march_kwargs):
     path = path or LinearPath()
     rays_key, march_key = jax.random.split(jax.random.key(seed))
-    state, cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-        jax.random.split(rays_key, num_rays), source, scene, path
-    )
+    state, cell = sample(jax.random.split(rays_key, num_rays), source, scene, path)
     rays = transport.Rays(
         cell=cell,
         state=state,
@@ -36,48 +28,6 @@ def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_step
     )
     absorptivity = jnp.full(scene.num_cells, kappa)
     return transport.march(march_key, rays, scene, path, kinds_table, absorptivity, max_steps=max_steps, **march_kwargs)
-
-
-class TestSampling:
-    """Sampled points must land inside the cell or on the face they came from."""
-
-    @pytest.mark.parametrize("case", ["mixed_3d", "brick_3d", "brick_2d"])
-    def test_cell_points_are_inside_their_cell(self, case):
-        blocks, vertices = {"mixed_3d": mixed_3d(), "brick_3d": brick((2, 2, 2)), "brick_2d": brick((3, 3), dim=2)}[
-            case
-        ]
-        _, _, scene = make(blocks, vertices)
-        keys = jax.random.split(jax.random.key(0), 2000)
-        cells = jax.random.randint(jax.random.key(1), (2000,), 0, scene.num_cells)
-        points = jax.vmap(sources.sample_point, in_axes=(0, None, None, 0, None))(
-            keys, scene.vertices, scene.cells.interior, cells, LinearPath()
-        )
-        assert bool(jnp.all(contains(scene, cells, points)))
-
-    @pytest.mark.parametrize("dim,expected", [(3, 1.0), (2, np.pi / 4)])
-    def test_directions_keep_their_out_of_plane_share(self, dim, expected):
-        """Directions are drawn in 3D and reduced to the mesh plane, so in 2D the
-        stored tangent is the in-plane part: |tangent| = sin(theta) with
-        cos(theta) uniform, whose mean is pi/4. Renormalising would give 1."""
-        blocks, vertices = brick((3,) * dim, dim=dim)
-        _, mesh_geometry, scene = make(blocks, vertices)
-        state, _ = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-            jax.random.split(jax.random.key(0), 100_000), emit_from_volume(scene, mesh_geometry), scene, LinearPath()
-        )
-        speed = jnp.linalg.vector_norm(state.tangent, axis=-1)
-        assert float(speed.max()) <= 1 + 1e-6
-        assert float(speed.mean()) == approx(expected, abs=3e-3)
-
-    def test_cell_points_are_uniform(self):
-        """Cells are picked in proportion to volume, so the mean must be the
-        centroid of the whole brick, not of the cell list."""
-        blocks, vertices = brick((2, 2, 2))
-        _, mesh_geometry, scene = make(blocks, vertices)
-        source = emit_from_volume(scene, mesh_geometry)
-        state, _ = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-            jax.random.split(jax.random.key(0), 100_000), source, scene, LinearPath()
-        )
-        assert np.asarray(state.position.mean(axis=0)) == approx([1.0, 1.0, 1.0], abs=0.02)
 
 
 class TestEnergyConservation:
@@ -90,7 +40,7 @@ class TestEnergyConservation:
         ]
         _, mesh_geometry, scene = make(blocks, vertices)
         table = uniform_boundary(Kind.ABSORB)
-        rays, deposit = run(scene, emit_from_volume(scene, mesh_geometry), table)
+        rays, deposit = run(scene, sources.build(mesh_geometry.cells.volume), table)
 
         emitted = float(mesh_geometry.cells.volume.sum())
         assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(emitted, rel=1e-4)
@@ -102,8 +52,8 @@ class TestEnergyConservation:
         table = uniform_boundary(Kind.ABSORB)
         escaping = uniform_boundary(Kind.ESCAPE)
 
-        _, sealed = run(scene, emit_from_volume(scene, mesh_geometry), table)
-        _, open_ = run(scene, emit_from_volume(scene, mesh_geometry), escaping)
+        _, sealed = run(scene, sources.build(mesh_geometry.cells.volume), table)
+        _, open_ = run(scene, sources.build(mesh_geometry.cells.volume), escaping)
 
         assert float(sealed.faces.sum()) > 0
         assert float(open_.faces.sum()) == approx(0.0)
@@ -127,7 +77,7 @@ class TestExtinction:
         """The remainder is deposited rather than dropped, so the balance closes
         to rounding and not to the size of the floor."""
         mesh_geometry, scene, mirror = self.mirrored_box()
-        source = emit_from_volume(scene, mesh_geometry)
+        source = sources.build(mesh_geometry.cells.volume)
         rays, deposit = run(scene, source, mirror, kappa=2.0, max_steps=2000, extinction=1e-6)
 
         assert not bool(jnp.any(rays.alive)), "extinction never ended the march"
@@ -137,7 +87,7 @@ class TestExtinction:
         """Two floors six decades apart must agree far more closely than the
         deposit varies across the mesh, or the truncation is displacing energy."""
         mesh_geometry, scene, mirror = self.mirrored_box()
-        source = emit_from_volume(scene, mesh_geometry)
+        source = sources.build(mesh_geometry.cells.volume)
         loose, fine = run(scene, source, mirror, kappa=2.0, max_steps=4000, extinction=1e-12)
         _, coarse = run(scene, source, mirror, kappa=2.0, max_steps=4000, extinction=1e-6)
 
@@ -150,7 +100,7 @@ class TestExtinction:
         buys back. The step cap is short of where `exp(-kappa s)` underflows,
         since reaching zero would end the march on its own."""
         mesh_geometry, scene, mirror = self.mirrored_box()
-        source = emit_from_volume(scene, mesh_geometry)
+        source = sources.build(mesh_geometry.cells.volume)
         forever, _ = run(scene, source, mirror, kappa=1.0, max_steps=300, extinction=0.0)
         stopped, _ = run(scene, source, mirror, kappa=1.0, max_steps=300)
 
@@ -164,39 +114,11 @@ class TestReflection:
         blocks, vertices = brick((3, 3, 3))
         _, mesh_geometry, scene = make(blocks, vertices)
         mirror = uniform_boundary(Kind.SPECULAR)
-        _, deposit = run(scene, emit_from_volume(scene, mesh_geometry), mirror, max_steps=600, kappa=2.0)
+        _, deposit = run(scene, sources.build(mesh_geometry.cells.volume), mirror, max_steps=600, kappa=2.0)
 
         emitted = float(mesh_geometry.cells.volume.sum())
         assert float(deposit.faces.sum()) == approx(0.0)
         assert float(deposit.cells.sum()) == approx(emitted, rel=2e-3)
-
-
-class TestCrossing:
-    """The march is only sound if a ray that leaves a cell arrives in the one
-    the topology says it should."""
-
-    @pytest.mark.parametrize("case", ["mixed_3d", "brick_3d", "brick_2d"])
-    def test_rays_land_inside_their_next_cell(self, case):
-        blocks, vertices = {"mixed_3d": mixed_3d(), "brick_3d": brick((3, 3, 3)), "brick_2d": brick((4, 4), dim=2)}[
-            case
-        ]
-        _, mesh_geometry, scene = make(blocks, vertices)
-        table = uniform_boundary(Kind.ABSORB)
-
-        num = 4000
-        keys = jax.random.split(jax.random.key(0), num)
-        state, cells = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-            keys, emit_from_volume(scene, mesh_geometry), scene, LinearPath()
-        )
-
-        nxt, moved, *_ = jax.vmap(transport.step, in_axes=(0, None, None, None, None, 0, 0, 0))(
-            keys, scene, LinearPath(), table, jnp.zeros(scene.num_cells), cells, state, jnp.ones(num)
-        )
-        # Interior crossings only; a boundary hit leaves the ray on the surface.
-        interior = nxt != cells
-        assert bool(jnp.any(interior))
-        scale = float(np.cbrt(mesh_geometry.cells.volume.max()))
-        assert bool(jnp.all(contains(scene, nxt[interior], moved.position[interior], tolerance=1e-5 * scale)))
 
 
 class TestDiffuseReflection:
@@ -209,7 +131,7 @@ class TestDiffuseReflection:
         blocks, vertices = {"brick_3d": brick((3, 3, 3)), "brick_2d": brick((4, 4), dim=2)}[case]
         _, mesh_geometry, scene = make(blocks, vertices)
         diffuse = uniform_boundary(Kind.DIFFUSE)
-        _, deposit = run(scene, emit_from_volume(scene, mesh_geometry), diffuse, max_steps=600, kappa=2.0)
+        _, deposit = run(scene, sources.build(mesh_geometry.cells.volume), diffuse, max_steps=600, kappa=2.0)
 
         emitted = float(mesh_geometry.cells.volume.sum())
         assert float(deposit.faces.sum()) == approx(0.0)
@@ -343,8 +265,8 @@ class TestReducedState:
     def launch(self, num, seed=0):
         blocks, vertices = brick((3, 3), dim=2)
         _, mesh_geometry, scene = make(blocks, vertices)
-        state, cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-            jax.random.split(jax.random.key(seed), num), emit_from_volume(scene, mesh_geometry), scene, LinearPath()
+        state, cell = sample(
+            jax.random.split(jax.random.key(seed), num), sources.build(mesh_geometry.cells.volume), scene, LinearPath()
         )
         rays = transport.Rays(cell=cell, state=state, energy=jnp.ones(num), alive=jnp.ones(num, dtype=bool))
         return scene, rays
@@ -400,23 +322,6 @@ class TestAxisymmetric:
         tagged = boundaries.tag(mesh_topology, {"axis": on_axis})
         return mesh_geometry, tagged, scene_module.build(mesh_topology, mesh_geometry, tagged)
 
-    def test_sampled_points_fill_the_ring_not_the_slice(self):
-        """Uniform in the ring means the density carries a factor r, so the mean
-        radius exceeds the unweighted one. For a slab from a to b that is
-        (integral r^2)/(integral r), which is 14/9 over [1, 2]."""
-        vertices = np.array([[0, 1], [1, 1], [1, 2], [0, 2]], dtype=float)
-        mesh_topology = topology.build([("quad", np.arange(4)[None, :])])
-        mesh_geometry = geometry.revolve(geometry.build(mesh_topology, vertices))
-        scene = scene_module.build(mesh_topology, mesh_geometry)
-
-        keys = jax.random.split(jax.random.key(0), 200_000)
-        cells = jnp.zeros(200_000, dtype=int)
-        points = jax.vmap(sources.sample_point, in_axes=(0, None, None, 0, None))(
-            keys, scene.vertices, scene.cells.interior, cells, AxisymmetricPath()
-        )
-        assert float(points[:, 1].mean()) == approx(14 / 9, abs=3e-3)
-        assert bool(jnp.all(contains(scene, cells, points)))
-
     def test_sealed_box_conserves_energy(self):
         """The same invariant as the Cartesian modes, over ring volumes and with
         cells that sit against the axis."""
@@ -440,20 +345,3 @@ class TestAxisymmetric:
         on_axis = np.flatnonzero(groups.face_group == groups.index("axis"))
         assert float(np.asarray(deposit.faces)[on_axis].sum()) == approx(0.0)
         assert float(deposit.faces.sum()) > 0, "the other walls must still absorb"
-
-    def test_rays_land_inside_their_next_cell(self):
-        """The hyperbolic march is only sound if a crossing arrives where the
-        topology says it should."""
-        mesh_geometry, _, scene = self.revolved()
-        path = AxisymmetricPath()
-        num = 4000
-        keys = jax.random.split(jax.random.key(2), num)
-        state, cells = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-            keys, sources.build(mesh_geometry.cells.volume), scene, path
-        )
-        nxt, moved, *_ = jax.vmap(transport.step, in_axes=(0, None, None, None, None, 0, 0, 0))(
-            keys, scene, path, uniform_boundary(Kind.ABSORB), jnp.zeros(scene.num_cells), cells, state, jnp.ones(num)
-        )
-        interior = nxt != cells
-        assert bool(jnp.any(interior))
-        assert bool(jnp.all(contains(scene, nxt[interior], moved.position[interior], tolerance=1e-9)))

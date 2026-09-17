@@ -7,6 +7,7 @@ square root of a quadratic and needs no hyperbola at all. Bisecting
 `AxisymmetricPath` chooses to parametrise the arc.
 """
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -83,6 +84,29 @@ def cross(position, direction, normal, offset):
     slot, step = PATH.crossing(normal, offset, state)
     moved, _ = PATH.advance(state, step)
     return moved, slot
+
+
+@jax.jit
+def cross_and_bounce(position, direction, normal, offset):
+    """The launched state, that state moved to its exit, and the exit mirrored off the face it left by."""
+    state = PATH.launch(position, direction, jnp.zeros(()))
+    slot, step = PATH.crossing(normal, offset, state)
+    moved, _ = PATH.advance(state, step)
+    return state, moved, PATH.reflect(moved, normal[slot])
+
+
+@jax.jit
+def hold(position, direction):
+    """A launched ray advanced by nothing."""
+    held, _ = PATH.advance(PATH.launch(position, direction, jnp.zeros(())), jnp.zeros(()))
+    return held
+
+
+@eqx.filter_jit
+def mirror(path, position, direction, normal):
+    """A launched state, and that state mirrored off a plane with `normal`."""
+    state = path.launch(position, direction, jnp.zeros(()))
+    return state, path.reflect(state, normal)
 
 
 def sample_case(rng, ratio=None, touch_axis=False):
@@ -171,8 +195,7 @@ class TestState:
             direction = rng.normal(size=3)
             direction /= np.linalg.norm(direction)
             position = jnp.array([rng.uniform(-1, 1), rng.uniform(0.05, 2.0)])
-            state = PATH.launch(position, jnp.asarray(direction), jnp.zeros(()))
-            held, _ = PATH.advance(state, jnp.zeros(()))
+            held = hold(position, jnp.asarray(direction))
             assert np.allclose(np.asarray(held.position), np.asarray(position), atol=1e-12)
             assert np.allclose(np.asarray(held.tangent), np.asarray(direction[:2]), atol=1e-12)
 
@@ -183,10 +206,9 @@ class TestState:
             ray, direction, normal, offset, want = sample_case(rng)
             if want is None or want < 1e-9:
                 continue
-            state = PATH.launch(jnp.array([ray[0], ray[1]]), jnp.asarray(direction), jnp.zeros(()))
-            slot, step = PATH.crossing(normal, offset, state)
-            moved, _ = PATH.advance(state, step)
-            bounced = PATH.reflect(moved, normal[slot])
+            state, moved, bounced = cross_and_bounce(
+                jnp.array([ray[0], ray[1]]), jnp.asarray(direction), normal, offset
+            )
             assert float(moved.angular_momentum) == approx(float(state.angular_momentum), rel=1e-12)
             assert float(bounced.angular_momentum) == approx(float(state.angular_momentum), rel=1e-12)
             # A bounce leaves the radius alone, so |tangent| cannot move either.
@@ -225,8 +247,7 @@ class TestReflect:
             direction /= np.linalg.norm(direction)
             normal = rng.normal(size=2)
             normal /= np.linalg.norm(normal)
-            state = path.launch(jnp.array([0.3, 1.1]), jnp.asarray(direction), jnp.zeros(()))
-            bounced = path.reflect(state, jnp.asarray(normal))
+            state, bounced = mirror(path, jnp.array([0.3, 1.1]), jnp.asarray(direction), jnp.asarray(normal))
             assert float(jnp.linalg.vector_norm(bounced.tangent)) == approx(
                 float(jnp.linalg.vector_norm(state.tangent)), rel=1e-12
             )

@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
-from meshes import ALL_ELEMENTS, brick, make, mixed_3d
 from pytest import approx
 
 from raytrax import scene as scene_module
 from raytrax.mesh import boundaries, geometry, topology
 from raytrax.mesh.unique import canonical_cycle
+from tests.meshes import ALL_ELEMENTS, brick, make, mixed_3d
 
 CASES = {
     **{name: builder() for name, builder in ALL_ELEMENTS.items()},

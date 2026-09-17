@@ -2,9 +2,12 @@
 fixture where cells of different types share faces, which is what the padded
 half-space layout exists to support."""
 
+import jax.numpy as jnp
 import numpy as np
 
+from raytrax import interactions
 from raytrax import scene as scene_module
+from raytrax.interactions import Kind
 from raytrax.mesh import boundaries, geometry, topology
 
 CUBE = np.array(
@@ -95,3 +98,8 @@ def brick_sides(mesh_topology, mesh_geometry, vertices):
         for side, limit in enumerate((vertices[:, axis].min(), vertices[:, axis].max())):
             groups[names[2 * axis + side]] = boundary[np.isclose(centre[:, axis], limit)]
     return groups
+
+
+def uniform_boundary(kind, reflectivity=1.0):
+    """One implicit group covering every boundary face."""
+    return interactions.Interactions(kind=(Kind(kind),), reflectivity=jnp.array([reflectivity]))

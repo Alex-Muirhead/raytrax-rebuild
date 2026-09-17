@@ -5,7 +5,7 @@
 # strict checks -- override validation, call shapes, assignments -- still applies
 # everywhere.
 preset = "strict"
-search-path = ["src", "tests", "scripts"]
+search-path = ["src", ".", "scripts"]
 
 [[sub-config]]
 matches = "tests/**"

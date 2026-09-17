@@ -8,6 +8,21 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## Tests split into unit, integration and verification directories, as a package
+
+`sxxxllvu`, 2026-09-17
+
+**Why:** A directory is selected by path with no configuration, so the fast
+unit tests run on their own. "Verification" is the V&V term for checking a
+solver against an analytic solution; "validation" means comparing with
+experiment. `tests` is a package so that `tests.meshes` is a module pyrefly can
+resolve from the repository root, and so that same-named files in two
+directories do not collide under pytest.
+**Instead of:** pytest markers, which every test must remember to carry and
+which an unmarked test silently escapes; and `tests` on pyrefly's search path
+with a bare `import meshes`.
+**Cost:** `pyrefly.toml` puts the repository root on the search path.
+
 ## The march's phases carry `jax.named_scope`, so a kernel can be traced back
 
 `uzqmsvou`, 2026-09-17
