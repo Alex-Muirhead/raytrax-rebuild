@@ -114,50 +114,53 @@ def _():
     return kappa, num_rays, temperature
 
 
+@app.function
+def solve(temperature, absorptivity, rays):
+    """Trace the shock layer, returning the mesh, its ring weighting, and the deposits.
+
+    `geom` is what the physics uses and is ring-weighted; positions stay
+    in `(x, r)`, so the figures read `mesh.geometry` instead.
+    """
+    path = MESHES / "reentry.msh"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
+
+    mesh = vtk.read(path)
+    geom = geometry.revolve(mesh.geometry)
+
+    scene = scene_module.build(mesh.topology, geom, mesh.groups)
+    scene_module.validate(mesh.topology, geom)
+
+    # Nothing here is a mirror, so a ray is finished the first time it
+    # reaches any boundary. ABSORB rather than ESCAPE on the shock and the
+    # wall only so that their deposits can be read back as a flux.
+    table = interactions.build(
+        mesh.groups,
+        {"shock": Kind.ABSORB, "wall": Kind.ABSORB, "outflow": Kind.ESCAPE, "axis": Kind.ABSORB},
+    )
+
+    shock = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("shock"))
+    # Revolved, `faces.area` is already the area of the ring a face sweeps,
+    # so this is the power the whole shock surface radiates.
+    source = sources.build(
+        cell_power=jnp.zeros(mesh.topology.num_cells),
+        face_power=STEFAN_BOLTZMANN * temperature**4 * geom.faces.area[shock],
+        face=shock,
+    )
+
+    problem = Problem(
+        scene, 
+        path=AxisymmetricPath(), 
+        interactions=table, 
+        absorptivity=jnp.full(mesh.topology.num_cells, absorptivity), 
+        sources=source,
+    )
+    tally = transport.trace(jax.random.key(4), problem, num_rays=rays, max_steps=2000)
+    return mesh, geom, source, problem, tally
+
+
 @app.cell
-def _():
-    def solve(temperature, absorptivity, rays):
-        """Trace the shock layer, returning the mesh, its ring weighting, and the deposits.
-
-        `geom` is what the physics uses and is ring-weighted; positions stay
-        in `(x, r)`, so the figures read `mesh.geometry` instead.
-        """
-        path = MESHES / "reentry.msh"
-        if not path.exists():
-            raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
-
-        mesh = vtk.read(path)
-        geom = geometry.revolve(mesh.geometry)
-
-        scene = scene_module.build(mesh.topology, geom, mesh.groups)
-        scene_module.validate(mesh.topology, geom)
-
-        # Nothing here is a mirror, so a ray is finished the first time it
-        # reaches any boundary. ABSORB rather than ESCAPE on the shock and the
-        # wall only so that their deposits can be read back as a flux.
-        table = interactions.build(
-            mesh.groups,
-            {"shock": Kind.ABSORB, "wall": Kind.ABSORB, "outflow": Kind.ESCAPE, "axis": Kind.ABSORB},
-        )
-
-        shock = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("shock"))
-        # Revolved, `faces.area` is already the area of the ring a face sweeps,
-        # so this is the power the whole shock surface radiates.
-        source = sources.build(
-            cell_power=jnp.zeros(mesh.topology.num_cells),
-            face_power=STEFAN_BOLTZMANN * temperature**4 * geom.faces.area[shock],
-            face=shock,
-        )
-
-        problem = Problem(scene, AxisymmetricPath(), table, jnp.full(mesh.topology.num_cells, absorptivity), source)
-        tally = transport.trace(jax.random.key(4), problem, num_rays=rays, max_steps=2000)
-        return mesh, geom, source, problem, tally
-
-    return (solve,)
-
-
-@app.cell
-def _(kappa, num_rays, solve, temperature):
+def _(kappa, num_rays, temperature):
     mesh, geom, source, problem, tally = solve(temperature.value, kappa.value, int(num_rays.value))
     deposit = tally.estimate(problem)
     heating = np.asarray(deposit.cells) / geom.cells.volume
@@ -489,7 +492,16 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(export_field, export_mesh, flux, heating, mesh, wall_flux, wall_profile, write):
+def _(
+    export_field,
+    export_mesh,
+    flux,
+    heating,
+    mesh,
+    wall_flux,
+    wall_profile,
+    write,
+):
     def _save_csv(name, columns, header):
         path = FIGURES / name
         np.savetxt(path, np.column_stack(columns), delimiter=",", header=header, comments="", fmt="%.8g")
