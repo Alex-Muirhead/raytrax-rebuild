@@ -17,9 +17,12 @@ CUBE = np.array(
 SQUARE = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=float)
 
 
-def make(blocks, vertices, groups=None):
+def make(blocks, vertices, groups=None, revolved=False):
+    """The topology, geometry and scene of a mesh, read as revolved about the x axis if `revolved`."""
     mesh_topology = topology.build(blocks)
     mesh_geometry = geometry.build(mesh_topology, vertices)
+    if revolved:
+        mesh_geometry = geometry.revolve(mesh_geometry)
     tagged = boundaries.tag(mesh_topology, groups or {})
     return mesh_topology, mesh_geometry, scene_module.build(mesh_topology, mesh_geometry, tagged)
 
@@ -85,6 +88,15 @@ def brick(shape, dim=3):
     origins = np.indices(tuple(counts)).reshape(dim, -1).T
     cells = ids[tuple((origins[:, None, :] + corner[None, :, :]).transpose(2, 0, 1))]
     return [(name, cells)], grid
+
+
+# The meshes a ray is sampled in and stepped through: one of mixed cell types,
+# and a plain brick in each dimension.
+SMALL_MESHES = {
+    "mixed_3d": mixed_3d,
+    "brick_3d": lambda: brick((3, 3, 3)),
+    "brick_2d": lambda: brick((4, 4), dim=2),
+}
 
 
 def brick_sides(mesh_topology, mesh_geometry, vertices):

@@ -206,7 +206,7 @@ class TestRevolve:
         blocks, vertices = brick((2, 2), dim=2)
         mesh_topology = topology.build(blocks)
         mesh_geometry = geometry.revolve(geometry.build(mesh_topology, vertices))
-        on_axis = np.isclose(geometry.build(mesh_topology, vertices).faces.centroid[:, 1], 0.0)
+        on_axis = np.isclose(mesh_geometry.faces.centroid[:, 1], 0.0)
         assert np.all(mesh_geometry.faces.area[on_axis] == 0.0)
         assert np.all(mesh_geometry.faces.area[~on_axis] > 0.0)
 

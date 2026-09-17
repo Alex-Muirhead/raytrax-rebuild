@@ -15,7 +15,7 @@ Module layout and the invariants a change must not violate are in
 
 ```
 uv run pytest                                   # everything
-JAX_PLATFORMS=cpu uv run pytest tests/unit      # one function at a time, about 20 s
+JAX_PLATFORMS=cpu uv run pytest tests/unit      # one function at a time, about 15 s
 uv run pytest tests/unit/test_paths.py -k angular_momentum   # one file, one selection
 uv run ruff format . && uv run ruff check --fix .
 uv run pyrefly check                            # strict over src/, relaxed in tests/examples/scripts

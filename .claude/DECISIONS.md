@@ -8,6 +8,19 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## Unit tests check a few exact or seeded cases, not hundreds of random ones
+
+`zysptvsx`, 2026-09-17
+
+**Why:** A unit test has to be simpler than the code it tests, or a failure
+means debugging the test. One case per seed, passed as a parameter, names the
+case that broke; a hand-built case with a closed-form answer (the arc that
+leaves through the face it entered by) pins a regression more precisely than a
+filter over random cells. The samplers in `random` are the exception: their
+contract is a distribution, so `test_random.py` keeps its statistical tests.
+**Instead of:** loops over hundreds of random cases with skip conditions.
+**Cost:** A few seeds cover less of the input space than hundreds of cases.
+
 ## Tests split into unit, integration and verification directories, as a package
 
 `sxxxllvu`, 2026-09-17

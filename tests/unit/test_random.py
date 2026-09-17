@@ -19,9 +19,15 @@ import pytest
 from pytest import approx
 from scipy import stats
 
-from raytrax.random import cosine_hemisphere, simplex, sphere
+from raytrax.random import cosine_hemisphere, fixed_sorted, simplex, sphere
 
 BINS = 6
+
+
+@pytest.mark.parametrize("length", [1, 2, 3, 4])
+def test_fixed_sorted_is_a_sort(length):
+    samples = jax.random.uniform(jax.random.key(0), (100, length))
+    assert np.array_equal(np.asarray(fixed_sorted(samples)), np.asarray(jnp.sort(samples, axis=-1)))
 
 
 @functools.cache
