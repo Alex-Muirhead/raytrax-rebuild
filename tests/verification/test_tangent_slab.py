@@ -8,6 +8,7 @@ from raytrax import interactions, sources, transport
 from raytrax.interactions import Kind
 from raytrax.mesh import boundaries, geometry, topology
 from raytrax.paths import AxisymmetricPath, LinearPath
+from raytrax.problem import Problem
 from raytrax.scene import build as build_scene
 from tests.meshes import brick, brick_sides
 
@@ -53,17 +54,9 @@ def test_tangent_slab(mode):
     hot = np.flatnonzero(groups.face_group == groups.index("xlo"))
     source = sources.build(jnp.zeros(mesh_topology.num_cells), mesh_geometry.faces.area[hot], hot)
 
-    _, deposit = transport.trace(
-        jax.random.key(0),
-        scene,
-        path,
-        table,
-        jnp.full(mesh_topology.num_cells, kappa),
-        source,
-        num_rays=num_rays,
-        lanes=num_rays,
-        max_steps=4000,
-    )
+    problem = Problem(scene, path, table, jnp.full(mesh_topology.num_cells, kappa), source)
+    tally = transport.trace(jax.random.key(0), problem, num_rays=num_rays, lanes=num_rays, max_steps=4000)
+    deposit = tally.estimate(problem)
 
     # Rows of depth, one column per cell across the slab.
     order = np.lexsort(mesh_geometry.cells.centroid.T[::-1])

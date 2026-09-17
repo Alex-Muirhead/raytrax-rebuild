@@ -10,6 +10,7 @@ import pytest
 from raytrax import sources, transport
 from raytrax.interactions import Kind
 from raytrax.paths import AxisymmetricPath, LinearPath
+from raytrax.problem import Problem
 from raytrax.scene import contains
 from tests.meshes import SMALL_MESHES, brick, make, uniform_boundary
 
@@ -17,15 +18,16 @@ RAYS = 1000
 
 # Jitted so that a vmap over many rays compiles once rather than dispatching op by op.
 sample = eqx.filter_jit(jax.vmap(sources.sample, in_axes=(0, None, None, None)))
-step = eqx.filter_jit(jax.vmap(transport.step, in_axes=(0, None, None, None, None, 0, 0, 0)))
+step = eqx.filter_jit(jax.vmap(transport.step, in_axes=(0, None, 0, 0, 0)))
 
 
 def step_once(scene, mesh_geometry, path):
     """Rays sampled through the volume and stepped once, as `(start cell, end cell, end position)`."""
     keys = jax.random.split(jax.random.key(0), RAYS)
-    state, cells = sample(keys, sources.build(mesh_geometry.cells.volume), scene, path)
-    table = uniform_boundary(Kind.ABSORB)
-    nxt, moved, *_ = step(keys, scene, path, table, jnp.zeros(scene.num_cells), cells, state, jnp.ones(RAYS))
+    source = sources.build(mesh_geometry.cells.volume)
+    state, cells = sample(keys, source, scene, path)
+    problem = Problem(scene, path, uniform_boundary(Kind.ABSORB), jnp.zeros(scene.num_cells), source)
+    nxt, moved, *_ = step(keys, problem, cells, state, jnp.ones(RAYS))
     return cells, nxt, moved.position
 
 

@@ -8,6 +8,27 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## A run is a `Tally` on a `Problem`, and rays launch with energy 1
+
+`lstsqluo`, 2026-09-17
+
+**Why:** `scene, path, interactions, absorptivity, sources` are what is
+simulated, and every function below `trace` took all five; `Problem` holds
+them, so the remaining arguments are only how the problem is solved. Resuming a
+run of 10_000 rays with more rays needs the running sums, the key and the rays
+still in flight, which `Tally` keeps. A ray launched with energy 1 makes the
+sums independent of the ray count, so runs of any size add up, a ray in flight
+keeps a valid energy across a resume, and the lane count no longer has to be
+clamped to the ray count.
+**Instead of:** Keeping the power-unit deposit of each run and re-weighting it
+as `(n * old + m * new) / (n + m)`, which is wrong for rays in flight that carry
+the old run's quantum; and launching rays with `sources.total`, which also
+resumes but ties the sums to one normalisation.
+**Cost:** `Deposit` from `march` and `Tally.deposit` are in ray units, and only
+`Tally.estimate` gives power. Nothing checks that a resume uses the same
+`Problem`. `tuning.lane_capacity` takes a lowering function, because the
+compiled loop `extend` takes a tally rather than a lane count.
+
 ## `march` takes a fixed number of steps, and the driver refills and stops
 
 `nylkypzq`, 2026-09-17

@@ -20,6 +20,7 @@ with app.setup:
     from raytrax.io import vtk
     from raytrax.mesh import MeshGeometry, geometry
     from raytrax.paths import AxisymmetricPath, LinearPath
+    from raytrax.problem import Problem
     from raytrax.scene import Scene
     from raytrax.sources import Sources
 
@@ -148,19 +149,13 @@ def run(case, absorptivity, rays, key):
     drained to 1e-15 of the emitted energy and a refilled one has spent a
     ten-fold budget over; `spent` and `flight` are what say so on any other case.
     """
-    final, deposit = transport.trace(
-        key,
-        case.scene,
-        case.path,
-        case.table,
-        jnp.full(case.mesh.topology.num_cells, absorptivity),
-        case.source,
-        num_rays=rays,
-        lanes=case.lanes,
-        max_steps=2_000,
+    problem = Problem(
+        case.scene, case.path, case.table, jnp.full(case.mesh.topology.num_cells, absorptivity), case.source
     )
+    tally = transport.trace(key, problem, num_rays=rays, lanes=case.lanes, max_steps=2_000)
+    deposit = tally.estimate(problem)
     escaped = float(deposit.escaped)
-    flight = float(final.energy.sum())
+    flight = float(tally.in_flight(problem))
     spent = float(deposit.cells.sum() + deposit.faces.sum()) + escaped + flight
 
     heating = np.asarray(deposit.cells) / case.geom.cells.volume

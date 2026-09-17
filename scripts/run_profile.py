@@ -23,13 +23,14 @@ from pathlib import Path
 from typing import Any
 
 import jax
-from benchmark import CASES, Case, environment, prepare
+from benchmark import CASES, environment, prepare
 from kernel_profile import kernel_rows
 
 from raytrax import interactions, sources, transport, tuning
 from raytrax import scene as scene_module
 from raytrax.io import vtk
 from raytrax.mesh import geometry
+from raytrax.problem import Problem
 
 # The host-side pipeline, as `prepare` calls it. Patched rather than inlined so
 # there is one description of the pipeline and the timings cannot drift from it.
@@ -69,7 +70,7 @@ def timed(stages: tuple[tuple[Any, str], ...]) -> Iterator[dict[str, float]]:
             setattr(module, name, function)
 
 
-def build(name: str, kappa: float) -> tuple[Case, dict[str, float]]:
+def build(name: str, kappa: float) -> tuple[Problem, dict[str, float]]:
     """Read one case, timing every host-side stage it passes through."""
     with timed(BUILD_STAGES) as elapsed:
         case = prepare(name, kappa)
@@ -77,21 +78,20 @@ def build(name: str, kappa: float) -> tuple[Case, dict[str, float]]:
 
 
 def run(
-    case: Case, num_rays: int, lanes: int | None, max_steps: int, repeats: int, refill_interval: int
+    case: Problem, num_rays: int, lanes: int | None, max_steps: int, repeats: int, refill_interval: int
 ) -> dict[str, Any]:
     """Time the compile and the marches of one `trace`, at the width it would pick."""
     key = jax.random.key(0)
-    arguments = (key, case.scene, case.path, case.table, case.absorptivity, case.source)
-
-    lanes = min(num_rays, (lanes or tuning.device_width()) or num_rays)
+    lanes = (lanes or tuning.device_width()) or num_rays
 
     def trace() -> Any:
         return transport.trace(
-            *arguments, num_rays=num_rays, lanes=lanes, max_steps=max_steps, refill_interval=refill_interval
+            key, case, num_rays=num_rays, lanes=lanes, max_steps=max_steps, refill_interval=refill_interval
         )
 
     start = time.perf_counter()
-    final, deposit = jax.block_until_ready(trace())
+    tally = jax.block_until_ready(trace())
+    deposit = tally.estimate(case)
     first = time.perf_counter() - start
 
     runs = []
@@ -101,7 +101,7 @@ def run(
         runs.append(time.perf_counter() - start)
     median = statistics.median(runs)
 
-    emitted = float(case.source.total)
+    emitted = float(case.sources.total)
     return {
         "lanes": lanes,
         "num_rays": num_rays,
@@ -109,7 +109,7 @@ def run(
         "compile_s": first - median,
         "median_s": median,
         "min_s": min(runs),
-        "alive_at_end": int(final.alive.sum()),
+        "alive_at_end": int(tally.rays.alive.sum()),
         "deposited_fraction": float(deposit.cells.sum() + deposit.faces.sum() + deposit.escaped) / emitted,
         "trace": trace,
     }

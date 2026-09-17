@@ -20,6 +20,7 @@ with app.setup:
     from raytrax.io import vtk
     from raytrax.mesh import geometry
     from raytrax.paths import AxisymmetricPath
+    from raytrax.problem import Problem
 
     MESHES = Path(__file__).parent / "meshes"
     FIGURES = Path(__file__).parent / "figures"
@@ -148,28 +149,21 @@ def _():
             face=shock,
         )
 
-        final, deposit = transport.trace(
-            jax.random.key(4),
-            scene,
-            AxisymmetricPath(),
-            table,
-            jnp.full(mesh.topology.num_cells, absorptivity),
-            source,
-            num_rays=rays,
-            max_steps=2000,
-        )
-        return mesh, geom, source, final, deposit
+        problem = Problem(scene, AxisymmetricPath(), table, jnp.full(mesh.topology.num_cells, absorptivity), source)
+        tally = transport.trace(jax.random.key(4), problem, num_rays=rays, max_steps=2000)
+        return mesh, geom, source, problem, tally
 
     return (solve,)
 
 
 @app.cell
 def _(kappa, num_rays, solve, temperature):
-    mesh, geom, source, final, deposit = solve(temperature.value, kappa.value, int(num_rays.value))
+    mesh, geom, source, problem, tally = solve(temperature.value, kappa.value, int(num_rays.value))
+    deposit = tally.estimate(problem)
     heating = np.asarray(deposit.cells) / geom.cells.volume
     # A face lying on the axis sweeps no ring at all, so it can never be reached.
     flux = np.asarray(deposit.faces) / np.where(geom.faces.area > 0, geom.faces.area, np.inf)
-    return deposit, final, flux, geom, heating, mesh, source
+    return deposit, flux, geom, heating, mesh, problem, source, tally
 
 
 @app.cell
@@ -440,13 +434,13 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(deposit, final, flux, group_faces, num_rays, source):
+def _(deposit, flux, group_faces, num_rays, problem, source, tally):
     def _budget():
         emitted = float(source.total)
         # A terminating ray is emptied into the deposit, so a lane still holding
         # anything is one the step cap caught part-way.
         escaped = float(deposit.escaped)
-        in_flight = float(final.energy.sum())
+        in_flight = float(tally.in_flight(problem))
         faces = np.asarray(deposit.faces)
         gas = float(deposit.cells.sum())
         total = gas + float(deposit.faces.sum()) + escaped + in_flight
@@ -469,7 +463,7 @@ def _(deposit, final, flux, group_faces, num_rays, source):
         {row("still in flight", in_flight)}
         | **accounted** | **{total / 1e6:,.1f} MW** | error {abs(total / emitted - 1):.2e} |
 
-        Peak wall flux {flux[wall].max() / 1e6:,.1f} MW/m2, with {int(final.alive.sum()):,} of
+        Peak wall flux {flux[wall].max() / 1e6:,.1f} MW/m2, with {int(tally.rays.alive.sum()):,} of
         {int(num_rays.value):,} rays left alive at the step limit.
         """)
 

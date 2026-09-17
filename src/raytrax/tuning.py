@@ -41,52 +41,46 @@ def device_width() -> int | None:
     return max(MIN_LANES, cores * THREADS_PER_CORE * OVERSUBSCRIPTION)
 
 
-def resident_bytes(march: Callable[..., Any], lanes: int, **traced: Any) -> int:
+def resident_bytes(lower: Callable[[int], Any], lanes: int) -> int:
     """Give the peak device memory of a compiled march.
 
     Parameters
     ----------
-    march
-        The march, wrapped in `eqx.filter_jit`.
+    lower
+        A function that gives the march lowered for a lane count, as
+        `eqx.filter_jit(...).lower` returns it.
     lanes
         The lane count to compile the march for.
-    **traced
-        All other arguments of `march`, by name.
 
     Returns
     -------
     bytes
         The peak device memory in bytes.
     """
-    # pyrefly: ignore[missing-attribute] - it does not model what filter_jit returns
-    lowered = march.lower(lanes=lanes, **traced)
     # equinox wraps the jax Compiled; the analyses live on the inner one.
-    compiled = lowered.compile().compiled
+    compiled = lower(lanes).compile().compiled
     analysis = compiled.memory_analysis()
     return analysis.temp_size_in_bytes + analysis.argument_size_in_bytes + analysis.output_size_in_bytes
 
 
 def lane_capacity(
-    march: Callable[..., Any],
+    lower: Callable[[int], Any],
     fraction: float = 0.7,
     probe: tuple[int, int] = (1 << 16, 1 << 18),
-    **traced: Any,
 ) -> int | None:
     """Give the largest lane count of a march that fits in device memory.
 
     Parameters
     ----------
-    march
-        The march, wrapped in `eqx.filter_jit`.
+    lower
+        A function that gives the march lowered for a lane count, as
+        `eqx.filter_jit(...).lower` returns it. The march must include the refill.
     fraction
         The fraction of the free device memory pool to fill. Increase it on a
         device that has no display and no other process.
     probe
         The two lane counts to compile the march for. Both must be large enough
         that the per-lane memory is more than the fixed memory of the march.
-    **traced
-        All other arguments of `march`, by name. Give a ray count larger than
-        both probe lane counts, so that the compiled march includes the refill.
 
     Returns
     -------
@@ -99,7 +93,7 @@ def lane_capacity(
     budget = fraction * (stats["bytes_limit"] - stats["bytes_in_use"])
 
     small, large = probe
-    cheap, dear = resident_bytes(march, small, **traced), resident_bytes(march, large, **traced)
+    cheap, dear = resident_bytes(lower, small), resident_bytes(lower, large)
     per_lane = (dear - cheap) / (large - small)
     fixed = cheap - per_lane * small
     return max(MIN_LANES, int((budget - fixed) / per_lane))

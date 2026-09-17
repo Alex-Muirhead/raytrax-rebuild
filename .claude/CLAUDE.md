@@ -68,12 +68,15 @@ NumPy up to `scene.build`, JAX after it:
    `interactions.apply` traces, and changing one recompiles.
 5. `sources.build(cell_power, face_power, face)` builds the emission cdf; cell
    and face power share units so one draw picks between them.
-6. `medium.Absorptivity.coefficient()` gives the per-cell array `trace` wants,
+6. `medium.Absorptivity.coefficient()` gives the per-cell array `Problem` wants,
    from a constant, a mesh field or a temperature model.
-7. `transport.trace(key, scene, path, interactions, absorptivity, sources,
-   num_rays)` returns `(Rays, Deposit)`. `Deposit` is `cells`, `faces` and the
-   scalar `escaped`; those plus whatever the step cap left in flight equal
-   `sources.total`.
+7. `problem.Problem(scene, path, interactions, absorptivity, sources)` is what
+   is simulated.
+8. `transport.trace(key, problem, num_rays)` returns a `Tally`, and
+   `tally.estimate(problem)` the `Deposit`: `cells`, `faces` and the scalar
+   `escaped`, which with `tally.in_flight(problem)` equal `sources.total`.
+   `transport.resume(tally, problem, num_rays)` adds `num_rays` more rays to
+   the same tally.
 
 `path` is `LinearPath` or `AxisymmetricPath` and must match what step 2 did.
 Path subclasses are stateless: every method is a classmethod, and per-ray
@@ -82,12 +85,12 @@ constants live in the `RayState` that `launch` builds.
 `trace` is `launch_and_march` decorated with `tuning.autosized("lanes")`:
 leaving `lanes` out takes the width from `tuning.device_width` and narrows it
 again on an overrun, while a lane count passed in is marched as given and lets
-the overrun raise. `launch_and_march` clamps whatever it gets to `num_rays`.
-It launches the first batch and calls `march` in the same `jit`. `march` takes
-a fixed `steps` and never launches or stops; the driver calls it for
-`refill_interval` steps at a time, refills dead lanes between those chunks and
-stops there once every ray is spent. A ray at or below `floor`
-(`extinction * quantum`) is stopped and emptied where it stands. `tuning.lane_capacity` is the
+the overrun raise. `launch_and_march` makes an empty `Tally` and calls
+`resume`, which calls the one compiled loop, `extend`. `march` takes a fixed
+`steps` and never launches or stops; `extend` refills dead lanes, calls it for
+`refill_interval` steps, and stops between those chunks once every ray is
+spent. Each ray launches with energy 1, and a ray at or below `extinction` is
+stopped and emptied where it stands. `tuning.lane_capacity` is the
 separate memory ceiling, and is no longer on the default path.
 
 ## Documents

@@ -21,6 +21,7 @@ with app.setup:
     from raytrax.io import vtk
     from raytrax.mesh import geometry
     from raytrax.paths import RADIAL, AxisymmetricPath, LinearPath
+    from raytrax.problem import Problem
 
     MESHES = Path(__file__).parent / "meshes"
 
@@ -130,12 +131,14 @@ def _(geom, kappa, mesh, num_rays, scene, source, table, trace_path):
 
     # Launching and marching explicitly rather than through `transport.trace`
     # keeps the launch states around for the ray-path plot below.
-    quantum = source.total / _rays
-    initial = transport.launch(key_launch, source, scene, _path, _rays, quantum)
-    absorptivity = jnp.full(mesh.topology.num_cells, kappa.value)
+    _problem = Problem(scene, _path, table, jnp.full(mesh.topology.num_cells, kappa.value), source)
+    initial = transport.launch(key_launch, _problem, _rays)
+    final, _summed = transport.march(key_march, initial, _problem, steps=4000, floor=1e-8)
 
-    final, deposit = transport.march(
-        key_march, initial, scene, _path, table, absorptivity, steps=4000, floor=1e-8 * quantum
+    # Each ray launches with energy 1, so the sums scale by the power of one ray.
+    _quantum = float(source.total) / _rays
+    deposit = transport.Deposit(
+        cells=_summed.cells * _quantum, faces=_summed.faces * _quantum, escaped=_summed.escaped * _quantum
     )
     heating = np.asarray(deposit.cells) / geom.cells.volume
     return deposit, final, heating, initial
@@ -146,7 +149,7 @@ def _(axisymmetric, deposit, final, initial, mesh, source):
     # A terminating ray is emptied into the deposit, so a lane still holding
     # anything is one the step cap caught part-way.
     _escaped = float(deposit.escaped)
-    _flight = float(final.energy.sum())
+    _flight = float(final.energy.sum()) * float(source.total) / initial.energy.size
     _total = float(deposit.cells.sum() + deposit.faces.sum()) + _escaped + _flight
 
     # A ray only reaches r = 0 with no angular momentum at all, so anything landing on the

@@ -26,6 +26,7 @@ with app.setup:
     from raytrax.io import vtk
     from raytrax.mesh import geometry
     from raytrax.paths import RADIAL, AxisymmetricPath, LinearPath
+    from raytrax.problem import Problem
 
     # Never negotiate a jupyter backend: marimo does not render ipywidgets, so
     # every figure here is a screenshot taken off screen.
@@ -162,16 +163,8 @@ def solve(name, absorptivity, rays):
     hot = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("hot_end"))
     source = sources.build(jnp.zeros(mesh.topology.num_cells), geom.faces.area[hot], hot)
 
-    _, deposit = transport.trace(
-        jax.random.key(4),
-        scene,
-        trace_path,
-        table,
-        jnp.full(mesh.topology.num_cells, absorptivity),
-        source,
-        num_rays=rays,
-        max_steps=4000,
-    )
+    problem = Problem(scene, trace_path, table, jnp.full(mesh.topology.num_cells, absorptivity), source)
+    deposit = transport.trace(jax.random.key(4), problem, num_rays=rays, max_steps=4000).estimate(problem)
     return mesh, geom, np.asarray(deposit.cells) / geom.cells.volume
 
 

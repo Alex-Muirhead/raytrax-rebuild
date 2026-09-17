@@ -1,4 +1,3 @@
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,26 +9,22 @@ from raytrax import sources, transport, tuning
 from raytrax.interactions import Kind
 from raytrax.mesh import boundaries, geometry, topology
 from raytrax.paths import AxisymmetricPath, LinearPath
+from raytrax.problem import Problem
 from tests.meshes import brick, make, mixed_3d, uniform_boundary
 
-# Jitted so that a vmap over many rays compiles once rather than dispatching op by op.
-sample = eqx.filter_jit(jax.vmap(sources.sample, in_axes=(0, None, None, None)))
+
+def problem(scene, source, kinds_table, kappa=1.0, path=None):
+    """A problem on a test mesh, with one absorption coefficient everywhere."""
+    return Problem(scene, path or LinearPath(), kinds_table, jnp.full(scene.num_cells, kappa), source)
 
 
 def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None, **trace_kwargs):
-    """Trace `num_rays` rays launched at once, so no lane is refilled."""
-    return transport.trace(
-        jax.random.key(seed),
-        scene,
-        path or LinearPath(),
-        kinds_table,
-        jnp.full(scene.num_cells, kappa),
-        source,
-        num_rays=num_rays,
-        lanes=num_rays,
-        max_steps=max_steps,
-        **trace_kwargs,
+    """Trace `num_rays` rays in as many lanes, as `(lanes, deposit)`."""
+    case = problem(scene, source, kinds_table, kappa, path)
+    tally = transport.trace(
+        jax.random.key(seed), case, num_rays=num_rays, lanes=num_rays, max_steps=max_steps, **trace_kwargs
     )
+    return tally.rays, tally.estimate(case)
 
 
 class TestEnergyConservation:
@@ -145,23 +140,16 @@ class TestRefill:
 
     @pytest.mark.parametrize("lanes,interval", [(20_000, 1), (5_000, 8), (2_000, 16)])
     def test_refilled_trace_launches_its_full_budget(self, lanes, interval):
-        """In a sealed box every launched ray deposits its whole quantum, so the
+        """In a sealed box every launched ray deposits all of its energy, so the
         deposited total is exact evidence that the budget was spent exactly."""
         blocks, vertices = brick((3, 3, 3))
         _, mesh_geometry, scene = make(blocks, vertices)
         source = sources.build(mesh_geometry.cells.volume)
+        case = problem(scene, source, uniform_boundary(Kind.ABSORB))
 
-        _, deposit = transport.trace(
-            jax.random.key(0),
-            scene,
-            LinearPath(),
-            uniform_boundary(Kind.ABSORB),
-            jnp.full(scene.num_cells, 1.0),
-            source,
-            num_rays=20_000,
-            lanes=lanes,
-            refill_interval=interval,
-        )
+        tally = transport.trace(jax.random.key(0), case, num_rays=20_000, lanes=lanes, refill_interval=interval)
+        deposit = tally.estimate(case)
+        assert int(tally.launched) == 20_000
         assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
 
     def test_what_escaped_survives_the_lane_being_reused(self):
@@ -171,20 +159,68 @@ class TestRefill:
         blocks, vertices = brick((3, 3, 3))
         _, mesh_geometry, scene = make(blocks, vertices)
         source = sources.build(mesh_geometry.cells.volume)
+        case = problem(scene, source, uniform_boundary(Kind.ESCAPE))
 
-        rays, deposit = transport.trace(
-            jax.random.key(0),
-            scene,
-            LinearPath(),
-            uniform_boundary(Kind.ESCAPE),
-            jnp.full(scene.num_cells, 1.0),
-            source,
-            num_rays=20_000,
-            lanes=2_000,
-        )
+        tally = transport.trace(jax.random.key(0), case, num_rays=20_000, lanes=2_000)
+        deposit = tally.estimate(case)
         assert float(deposit.escaped) > 0, "nothing escaped, so the budget closing proves nothing"
-        accounted = float(deposit.cells.sum() + deposit.faces.sum() + deposit.escaped + rays.energy.sum())
+        accounted = float(deposit.cells.sum() + deposit.faces.sum() + deposit.escaped + tally.in_flight(case))
         assert accounted == approx(float(source.total), rel=1e-6)
+
+
+class TestResume:
+    """A tally extended by a second run must be the tally of one longer run."""
+
+    def box(self, kind):
+        blocks, vertices = brick((3, 3, 3))
+        _, mesh_geometry, scene = make(blocks, vertices)
+        return problem(scene, sources.build(mesh_geometry.cells.volume), uniform_boundary(kind))
+
+    @staticmethod
+    def accounted(tally, case):
+        deposit = tally.estimate(case)
+        return float(deposit.cells.sum() + deposit.faces.sum() + deposit.escaped + tally.in_flight(case))
+
+    def test_a_resumed_tally_counts_both_runs(self):
+        """The second run has a different ray count on the same lanes. Every ray
+        of both runs must be launched once, and the balance must close over all of them."""
+        case = self.box(Kind.ABSORB)
+        tally = transport.trace(jax.random.key(0), case, num_rays=10_000, lanes=2_000)
+        tally = transport.resume(tally, case, num_rays=5_000)
+
+        deposit = tally.estimate(case)
+        assert int(tally.launched) == 15_000
+        assert tally.rays.cell.shape == (2_000,)
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(case.sources.total), rel=1e-6)
+
+    def test_rays_cut_off_by_the_step_limit_finish_on_resume(self):
+        """In a mirrored box the rays outlive a short step limit. They must stay
+        in the tally as energy in flight, and a resume with no new rays must
+        finish them without losing any of it."""
+        case = self.box(Kind.SPECULAR)
+        tally = transport.trace(jax.random.key(0), case, num_rays=2_000, lanes=2_000, max_steps=16)
+        assert bool(jnp.any(tally.rays.alive)), "the step limit did not cut any ray off"
+        assert self.accounted(tally, case) == approx(float(case.sources.total), rel=1e-9)
+
+        tally = transport.resume(tally, case, num_rays=0, max_steps=4_000)
+        assert not bool(jnp.any(tally.rays.alive)), "the resume did not finish the rays"
+        assert int(tally.launched) == 2_000
+        assert self.accounted(tally, case) == approx(float(case.sources.total), rel=1e-9)
+
+    def test_a_split_run_estimates_what_one_run_does(self):
+        """Each ray escapes with a share in [0, 1] of the source power, so its
+        variance is at most p (1 - p). Two independent estimates from 20_000 rays
+        must then agree within 4 of their combined standard errors."""
+        case = self.box(Kind.ESCAPE)
+        single = transport.trace(jax.random.key(0), case, num_rays=20_000, lanes=4_096)
+        split = transport.trace(jax.random.key(1), case, num_rays=10_000, lanes=4_096)
+        split = transport.resume(split, case, num_rays=10_000)
+
+        total = float(case.sources.total)
+        share = float(single.estimate(case).escaped) / total
+        assert 0 < share < 1
+        error = total * np.sqrt(2 * share * (1 - share) / 20_000)
+        assert abs(float(split.estimate(case).escaped) - share * total) < 4 * error
 
 
 class TestLaneSizing:
@@ -195,27 +231,17 @@ class TestLaneSizing:
     def case(self):
         blocks, vertices = brick((3, 3, 3))
         _, mesh_geometry, scene = make(blocks, vertices)
-        return scene, sources.build(mesh_geometry.cells.volume)
-
-    def traced(self, scene, source):
-        """Everything `launch_and_march` takes except the lane count."""
-        return {
-            "key": jax.random.key(0),
-            "scene": scene,
-            "path": LinearPath(),
-            "interactions": uniform_boundary(Kind.ABSORB),
-            "absorptivity": jnp.full(scene.num_cells, 1.0),
-            "sources": source,
-            "num_rays": 1 << 20,
-            "max_steps": 400,
-            "refill_interval": 8,
-            "extinction": 1e-8,
-        }
+        return problem(scene, sources.build(mesh_geometry.cells.volume), uniform_boundary(Kind.ABSORB))
 
     def test_the_ceiling_is_a_width_that_still_fits_the_pool(self):
-        scene, source = self.case()
-        traced = self.traced(scene, source)
-        lanes = tuning.lane_capacity(transport.launch_and_march, **traced)
+        case = self.case()
+
+        def lower(lanes):
+            tally = transport.Tally.empty(jax.random.key(0), case, lanes)
+            # pyrefly: ignore[missing-attribute] - it does not model what filter_jit returns
+            return transport.extend.lower(tally, case, jnp.asarray(1 << 20), 400, 8, 1e-8)
+
+        lanes = tuning.lane_capacity(lower)
         if lanes is None:
             pytest.skip("the device does not report its memory")
 
@@ -223,7 +249,7 @@ class TestLaneSizing:
         # The ceiling is extrapolated from two probe widths, so the check is
         # that the march XLA compiles at it really does claim to fit.
         limit = jax.local_devices()[0].memory_stats()["bytes_limit"]
-        assert tuning.resident_bytes(transport.launch_and_march, lanes, **traced) <= limit
+        assert tuning.resident_bytes(lower, lanes) <= limit
 
     def test_the_default_width_is_the_device_and_not_the_ray_count(self):
         width = tuning.device_width()
@@ -234,29 +260,30 @@ class TestLaneSizing:
         # with the ray count is what the default exists to prevent.
         assert tuning.MIN_LANES <= width < 1 << 22
 
-        scene, source = self.case()
-        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
-        rays, deposit = transport.trace(*args, source, num_rays=4 * width, max_steps=400)
-        assert rays.cell.shape == (width,)
-        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
+        case = self.case()
+        tally = transport.trace(jax.random.key(0), case, num_rays=4 * width, max_steps=400)
+        deposit = tally.estimate(case)
+        assert tally.rays.cell.shape == (width,)
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(case.sources.total), rel=1e-6)
 
     def test_a_width_the_caller_passes_is_the_width_marched(self):
         """Only an automatic width is adapted. A batch the caller sized is run as
         asked, so an overrun reaches them instead of being narrowed behind them."""
-        scene, source = self.case()
-        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
-        rays, deposit = transport.trace(*args, source, num_rays=20_000, lanes=2_000, max_steps=400)
-        assert rays.cell.shape == (2_000,)
-        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
+        case = self.case()
+        tally = transport.trace(jax.random.key(0), case, num_rays=20_000, lanes=2_000, max_steps=400)
+        deposit = tally.estimate(case)
+        assert tally.rays.cell.shape == (2_000,)
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(case.sources.total), rel=1e-6)
 
-    def test_a_width_past_the_ray_count_is_the_ray_count(self):
-        """Every lane is launched, and each ray carries `total / num_rays`, so a
-        lane past the budget would deposit a quantum nobody emitted."""
-        scene, source = self.case()
-        args = (jax.random.key(0), scene, LinearPath(), uniform_boundary(Kind.ABSORB), jnp.full(scene.num_cells, 1.0))
-        rays, deposit = transport.trace(*args, source, num_rays=5_000, lanes=20_000, max_steps=400)
-        assert rays.cell.shape == (5_000,)
-        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(source.total), rel=1e-6)
+    def test_a_width_past_the_ray_count_leaves_lanes_empty(self):
+        """The lane count does not depend on the ray count. The lanes past the
+        budget never receive a ray, and must not add energy to the balance."""
+        case = self.case()
+        tally = transport.trace(jax.random.key(0), case, num_rays=5_000, lanes=20_000, max_steps=400)
+        deposit = tally.estimate(case)
+        assert tally.rays.cell.shape == (20_000,)
+        assert int(tally.launched) == 5_000
+        assert float(deposit.cells.sum() + deposit.faces.sum()) == approx(float(case.sources.total), rel=1e-6)
 
 
 class TestReducedState:
@@ -264,28 +291,17 @@ class TestReducedState:
     of it is not stored -- it survives as the deficit in |tangent| -- so these
     guard the two things that makes true."""
 
-    def launch(self, num, seed=0):
+    def launch(self, kind, kappa, num=2000, seed=0):
         blocks, vertices = brick((3, 3), dim=2)
         _, mesh_geometry, scene = make(blocks, vertices)
-        state, cell = sample(
-            jax.random.split(jax.random.key(seed), num), sources.build(mesh_geometry.cells.volume), scene, LinearPath()
-        )
-        rays = transport.Rays(cell=cell, state=state, energy=jnp.ones(num), alive=jnp.ones(num, dtype=bool))
-        return scene, rays
+        case = problem(scene, sources.build(mesh_geometry.cells.volume), uniform_boundary(kind), kappa)
+        return case, transport.launch(jax.random.key(seed), case, num)
 
     def test_specular_march_preserves_the_out_of_plane_share(self):
         """Crossings and mirror bounces are the whole march, and neither may move
         energy between the plane and the direction out of it."""
-        scene, rays = self.launch(2000)
-        final, _ = transport.march(
-            jax.random.key(1),
-            rays,
-            scene,
-            LinearPath(),
-            uniform_boundary(Kind.SPECULAR),
-            jnp.full(scene.num_cells, 0.5),
-            steps=200,
-        )
+        case, rays = self.launch(Kind.SPECULAR, 0.5)
+        final, _ = transport.march(jax.random.key(1), rays, case, steps=200)
         before = jnp.linalg.vector_norm(rays.state.tangent, axis=-1)
         after = jnp.linalg.vector_norm(final.state.tangent, axis=-1)
         assert np.allclose(np.asarray(before), np.asarray(after), rtol=1e-5)
@@ -293,16 +309,8 @@ class TestReducedState:
     def test_travel_is_the_three_dimensional_length(self):
         """`travel` is the distance flown in 3D, which is the in-plane distance
         divided by |tangent|. Rays fly straight out, so the two are comparable."""
-        scene, rays = self.launch(2000)
-        final, _ = transport.march(
-            jax.random.key(1),
-            rays,
-            scene,
-            LinearPath(),
-            uniform_boundary(Kind.ESCAPE),
-            jnp.zeros(scene.num_cells),
-            steps=100,
-        )
+        case, rays = self.launch(Kind.ESCAPE, 0.0)
+        final, _ = transport.march(jax.random.key(1), rays, case, steps=100)
         assert not bool(jnp.any(final.alive)), "rays ran out of steps"
         chord = jnp.linalg.vector_norm(final.state.position - rays.state.position, axis=-1)
         speed = jnp.linalg.vector_norm(rays.state.tangent, axis=-1)

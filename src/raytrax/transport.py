@@ -1,3 +1,4 @@
+import functools
 from typing import Any, NamedTuple
 
 import equinox as eqx
@@ -7,11 +8,10 @@ from jaxtyping import Array, Bool, Float, Int
 
 from raytrax import interactions as interaction
 from raytrax import tuning
-from raytrax.interactions import Interactions
-from raytrax.paths import Path, RayState
+from raytrax.paths import RayState
+from raytrax.problem import Problem
 from raytrax.scene import Scene
 from raytrax.shapes import Flag, Index, KeyArray, Scalar
-from raytrax.sources import Sources
 from raytrax.sources import sample as sample_source
 
 
@@ -103,7 +103,7 @@ class Rays(eqx.Module):
     state
         The position and direction of each ray.
     energy
-        The energy that each ray carries.
+        The energy that each ray carries, as a fraction of its launch energy.
     alive
         True for each lane that holds a ray in flight.
     """
@@ -114,23 +114,17 @@ class Rays(eqx.Module):
     alive: Bool[Array, " nray"]
 
 
-def launch(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any], lanes: int, quantum: Scalar) -> Rays:
-    """Draw a batch of new rays from the sources.
+def launch(key: KeyArray, problem: Problem, lanes: int) -> Rays:
+    """Draw a batch of new rays from the sources, each with energy 1.
 
     Parameters
     ----------
     key
         The PRNG key for the new rays.
-    sources
-        The emission distribution.
-    scene
-        The device arrays of the mesh.
-    path
-        The ray kinematics of the run.
+    problem
+        The problem whose sources emit the rays.
     lanes
         The number of rays in the batch.
-    quantum
-        The energy of each new ray.
 
     Returns
     -------
@@ -138,22 +132,13 @@ def launch(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any], lanes
         The batch, with all rays alive.
     """
     state, cell = jax.vmap(sample_source, in_axes=(0, None, None, None))(
-        jax.random.split(key, lanes), sources, scene, path
+        jax.random.split(key, lanes), problem.sources, problem.scene, problem.path
     )
-    return Rays(cell=cell, state=state, energy=jnp.full(lanes, quantum), alive=jnp.ones(lanes, dtype=bool))
+    return Rays(cell=cell, state=state, energy=jnp.ones(lanes), alive=jnp.ones(lanes, dtype=bool))
 
 
 @jax.named_scope("refill")
-def refill(
-    key: KeyArray,
-    rays: Rays,
-    launched: Index,
-    budget: int,
-    quantum: Scalar,
-    sources: Sources,
-    scene: Scene,
-    path: Path[Any],
-) -> tuple[Rays, Index]:
+def refill(key: KeyArray, rays: Rays, launched: Index, budget: Index, problem: Problem) -> tuple[Rays, Index]:
     """Put new rays in dead lanes, up to the launch budget.
 
     Parameters
@@ -165,15 +150,9 @@ def refill(
     launched
         The number of rays launched before this refill.
     budget
-        The total number of rays to launch in the run.
-    quantum
-        The energy of each new ray.
-    sources
-        The emission distribution of the new rays.
-    scene
-        The device arrays of the mesh.
-    path
-        The ray kinematics of the run.
+        The number of rays launched when the run is complete.
+    problem
+        The problem whose sources emit the new rays.
 
     Returns
     -------
@@ -187,7 +166,7 @@ def refill(
     rank = jnp.cumulative_sum(dead) - 1
     take = dead & (launched + rank < budget)
 
-    fresh = launch(key, sources, scene, path, rays.cell.shape[0], quantum)
+    fresh = launch(key, problem, rays.cell.shape[0])
     return _keep_tree(take, fresh, rays), launched + jnp.sum(take)
 
 
@@ -221,30 +200,15 @@ class StepResult(NamedTuple):
     face_deposit: Scalar
 
 
-def step(
-    key: KeyArray,
-    scene: Scene,
-    path: Path[Any],
-    interactions: Interactions,
-    absorptivity: Float[Array, " ncell"],
-    cell: Index,
-    state: RayState,
-    energy: Scalar,
-) -> StepResult:
+def step(key: KeyArray, problem: Problem, cell: Index, state: RayState, energy: Scalar) -> StepResult:
     """Move one ray across one cell, and deposit energy along its path.
 
     Parameters
     ----------
     key
         The PRNG key for a boundary interaction.
-    scene
-        The device arrays of the mesh.
-    path
-        The ray kinematics of the run.
-    interactions
-        The interaction table.
-    absorptivity
-        The absorption coefficient of each cell.
+    problem
+        The problem that the ray moves through.
     cell
         The cell that contains the ray.
     state
@@ -257,6 +221,7 @@ def step(
     result
         The ray after the step, and the energy it deposited.
     """
+    scene, path = problem.scene, problem.path
     normal, offset = scene.cells.normal[cell], scene.cells.offset[cell]
     slot, parameter = path.crossing(normal, offset, state)
     # A corner or grazing hit can give a small negative parameter.
@@ -264,7 +229,7 @@ def step(
 
     moved, flown = path.advance(state, parameter)
     with jax.named_scope("attenuate"):
-        transmission = jnp.exp(-absorptivity[cell] * flown)
+        transmission = jnp.exp(-problem.absorptivity[cell] * flown)
         cell_deposit = energy * (1 - transmission)
         energy = energy * transmission
     state = moved
@@ -274,7 +239,7 @@ def step(
     at_boundary = neighbour < 0
 
     group = jnp.where(at_boundary, scene.faces.group[face], 0)
-    hit_state, absorbed, terminated = interaction.apply(path, interactions, group, key, state, normal[slot])
+    hit_state, absorbed, terminated = interaction.apply(path, problem.interactions, group, key, state, normal[slot])
 
     state = _keep_tree(at_boundary, hit_state, state)
     face_deposit = jnp.where(at_boundary, energy * absorbed, 0.0)
@@ -291,16 +256,7 @@ def step(
 
 
 @eqx.filter_jit
-def march(
-    key: KeyArray,
-    rays: Rays,
-    scene: Scene,
-    path: Path[Any],
-    interactions: Interactions,
-    absorptivity: Float[Array, " ncell"],
-    steps: int,
-    floor: float | Scalar = 0.0,
-) -> tuple[Rays, Deposit]:
+def march(key: KeyArray, rays: Rays, problem: Problem, steps: int, floor: float | Scalar = 0.0) -> tuple[Rays, Deposit]:
     """Move each live ray across a fixed number of cells, and deposit energy along its path.
 
     Parameters
@@ -309,14 +265,8 @@ def march(
         The PRNG key for the march.
     rays
         The batch of rays.
-    scene
-        The device arrays of the mesh.
-    path
-        The ray kinematics of the run.
-    interactions
-        The interaction table.
-    absorptivity
-        The absorption coefficient of each cell.
+    problem
+        The problem that the rays move through.
     steps
         The number of steps. The march takes all of them, also when all rays stop earlier.
     floor
@@ -338,15 +288,8 @@ def march(
         extinct = rays.alive & (rays.energy <= floor)
         stepping = rays.alive & ~extinct
 
-        crossed = jax.vmap(step, in_axes=(0, None, None, None, None, 0, 0, 0))(
-            jax.random.split(key, rays.cell.shape[0]),
-            scene,
-            path,
-            interactions,
-            absorptivity,
-            rays.cell,
-            rays.state,
-            rays.energy,
+        crossed = jax.vmap(step, in_axes=(0, None, 0, 0, 0))(
+            jax.random.split(key, rays.cell.shape[0]), problem, rays.cell, rays.state, rays.energy
         )
 
         # Whatever a terminating ray still carries left the domain: an absorbing
@@ -371,8 +314,89 @@ def march(
         )
         return (rays, deposit), None
 
-    (rays, deposit), _ = jax.lax.scan(body, (rays, Deposit.zeros(scene)), jax.random.split(key, steps))
+    (rays, deposit), _ = jax.lax.scan(body, (rays, Deposit.zeros(problem.scene)), jax.random.split(key, steps))
     return rays, deposit
+
+
+class Tally(eqx.Module):
+    """The running sums of a Monte-Carlo run on one problem, which a later run can extend.
+
+    Attributes
+    ----------
+    key
+        The PRNG key for the next run.
+    launched
+        The number of rays launched so far.
+    rays
+        The lanes, with the rays that are still in flight.
+    deposit
+        The summed energy that the rays deposited and that escaped, in units of
+        the launch energy of one ray.
+    """
+
+    key: KeyArray
+    launched: Int[Array, ""]
+    rays: Rays
+    deposit: Deposit
+
+    @classmethod
+    def empty(cls, key: KeyArray, problem: Problem, lanes: int) -> "Tally":
+        """Make a tally with no rays launched.
+
+        Parameters
+        ----------
+        key
+            The PRNG key for the first run.
+        problem
+            The problem to simulate.
+        lanes
+            The number of rays in flight at one time, for this tally and every run that extends it.
+
+        Returns
+        -------
+        tally
+            The tally, with all lanes empty.
+        """
+        shapes = jax.eval_shape(functools.partial(launch, lanes=lanes), key, problem)
+
+        def zeros(leaf: Any) -> Array:
+            return jnp.zeros(leaf.shape, leaf.dtype)
+
+        rays = jax.tree.map(zeros, shapes)
+        return cls(key=key, launched=jnp.asarray(0), rays=rays, deposit=Deposit.zeros(problem.scene))
+
+    def estimate(self, problem: Problem) -> Deposit:
+        """Give the deposit and escape of the problem, in the power units of its sources.
+
+        Parameters
+        ----------
+        problem
+            The problem that the tally was run on.
+
+        Returns
+        -------
+        deposit
+            The mean energy per launched ray, times the total emitted power.
+        """
+        scale = problem.sources.total / self.launched
+        return Deposit(
+            cells=self.deposit.cells * scale, faces=self.deposit.faces * scale, escaped=self.deposit.escaped * scale
+        )
+
+    def in_flight(self, problem: Problem) -> Scalar:
+        """Give the power that is still in flight at the step limit, in the units of `estimate`.
+
+        Parameters
+        ----------
+        problem
+            The problem that the tally was run on.
+
+        Returns
+        -------
+        power
+            The power that the live rays carry.
+        """
+        return jnp.sum(self.rays.energy) * problem.sources.total / self.launched
 
 
 # (steps taken, key, rays launched so far, the batch, the accumulator)
@@ -380,87 +404,129 @@ type Carry = tuple[Index, KeyArray, Index, Rays, Deposit]
 
 
 @eqx.filter_jit
-def launch_and_march(
-    key: KeyArray,
-    scene: Scene,
-    path: Path[Any],
-    interactions: Interactions,
-    absorptivity: Float[Array, " ncell"],
-    sources: Sources,
-    num_rays: int,
-    lanes: int | None = None,
-    max_steps: int = 100_000,
-    refill_interval: int = 8,
-    extinction: float = 1e-8,
-) -> tuple[Rays, Deposit]:
-    """Launch rays from the sources and march them until all `num_rays` rays stop.
+def extend(
+    tally: Tally, problem: Problem, num_rays: Index, max_steps: int, refill_interval: int, extinction: float
+) -> Tally:
+    """Launch more rays into a tally, and march until they all stop.
+
+    This is the compiled loop of `resume`. It takes `num_rays` as an array, so a
+    new ray count does not cause a recompile.
 
     Parameters
     ----------
-    key
-        The PRNG key for the run.
-    scene
-        The device arrays of the mesh.
-    path
-        The ray kinematics of the run. It must agree with the geometry of `scene`.
-    interactions
-        The interaction table.
-    absorptivity
-        The absorption coefficient of each cell.
-    sources
-        The emission distribution.
+    tally
+        The tally to extend.
+    problem
+        The problem that the tally was run on.
     num_rays
-        The total number of rays to launch. Each ray carries `sources.total / num_rays`.
-    lanes
-        The number of rays in flight at one time, or None for `num_rays`. A
-        value larger than `num_rays` becomes `num_rays`.
+        The number of rays to add.
     max_steps
-        The largest number of steps, rounded up to a multiple of
+        The largest number of steps in this run.
+    refill_interval
+        The number of steps between refills of dead lanes.
+    extinction
+        The fraction of the launch energy at or below which a ray stops.
+
+    Returns
+    -------
+    tally
+        The extended tally.
+    """
+    budget = tally.launched + num_rays
+
+    def body(carry: Carry) -> Carry:
+        taken, key, launched, rays, deposit = carry
+        key, key_refill, key_march = jax.random.split(key, 3)
+        rays, launched = jax.lax.cond(
+            launched < budget,
+            lambda: refill(key_refill, rays, launched, budget, problem),
+            lambda: (rays, launched),
+        )
+        rays, chunk = march(key_march, rays, problem, refill_interval, extinction)
+        return taken + refill_interval, key, launched, rays, jax.tree.map(jnp.add, deposit, chunk)
+
+    def cond(carry: Carry) -> Flag:
+        taken, _, launched, rays, _ = carry
+        return (taken < max_steps) & (jnp.any(rays.alive) | (launched < budget))
+
+    start: Carry = (jnp.asarray(0), tally.key, tally.launched, tally.rays, tally.deposit)
+    _, key, launched, rays, deposit = jax.lax.while_loop(cond, body, start)
+    return Tally(key=key, launched=launched, rays=rays, deposit=deposit)
+
+
+def resume(
+    tally: Tally,
+    problem: Problem,
+    num_rays: int,
+    max_steps: int = 100_000,
+    refill_interval: int = 8,
+    extinction: float = 1e-8,
+) -> Tally:
+    """Launch `num_rays` more rays into a tally, and march until they all stop.
+
+    The problem must be the one that the tally was run on. Nothing checks this.
+
+    Parameters
+    ----------
+    tally
+        The tally to extend. Its lanes set the batch width.
+    problem
+        The problem that the tally was run on.
+    num_rays
+        The number of rays to add. Zero only finishes the rays still in flight.
+    max_steps
+        The largest number of steps in this run, rounded up to a multiple of
         `refill_interval`. It is a safety limit: the run stops when all rays stop.
     refill_interval
         The number of steps between refills of dead lanes, and between checks
         for the end of the run. The best value changes with the problem.
     extinction
-        The fraction of the ray energy at launch below which a ray stops and
-        deposits its remaining energy in its cell.
+        The fraction of the launch energy of a ray at or below which the ray
+        stops and deposits its remaining energy in its cell.
 
     Returns
     -------
-    rays
-        The batch at the end of the run. Rays that are still alive hit the step limit.
-    deposit
-        The energy that the rays deposited, and the energy that escaped. With the
-        energy of the live rays, it sums to the energy of all launched rays.
+    tally
+        The tally with the new rays added. Rays that are still alive hit the step limit.
     """
-    # A lane past the ray count has no ray to put in it, and would launch one
-    # carrying a quantum the budget never counted.
-    lanes = min(num_rays, lanes or num_rays)
+    return extend(tally, problem, jnp.asarray(num_rays), max_steps, refill_interval, extinction)
 
-    key, key_launch = jax.random.split(key)
-    quantum = sources.total / num_rays
-    floor = extinction * quantum
-    rays = launch(key_launch, sources, scene, path, lanes, quantum)
 
-    def body(carry: Carry) -> Carry:
-        taken, key, launched, rays, deposit = carry
-        key, key_march, key_refill = jax.random.split(key, 3)
-        rays, chunk = march(key_march, rays, scene, path, interactions, absorptivity, refill_interval, floor)
-        # Static, so a run that launches every ray at once compiles no sampling in the loop.
-        if lanes < num_rays:
-            rays, launched = jax.lax.cond(
-                launched < num_rays,
-                lambda: refill(key_refill, rays, launched, num_rays, quantum, sources, scene, path),
-                lambda: (rays, launched),
-            )
-        return taken + refill_interval, key, launched, rays, jax.tree.map(jnp.add, deposit, chunk)
+def launch_and_march(
+    key: KeyArray,
+    problem: Problem,
+    num_rays: int,
+    lanes: int | None = None,
+    max_steps: int = 100_000,
+    refill_interval: int = 8,
+    extinction: float = 1e-8,
+) -> Tally:
+    """Start a tally on a problem, and run `num_rays` rays into it.
 
-    def cond(carry: Carry) -> Flag:
-        taken, _, launched, rays, _ = carry
-        return (taken < max_steps) & (jnp.any(rays.alive) | (launched < num_rays))
+    Parameters
+    ----------
+    key
+        The PRNG key for the tally.
+    problem
+        The problem to simulate.
+    num_rays
+        The number of rays to launch.
+    lanes
+        The number of rays in flight at one time, or None for `num_rays`.
+    max_steps
+        The largest number of steps, as in `resume`.
+    refill_interval
+        The number of steps between refills of dead lanes, as in `resume`.
+    extinction
+        The fraction of the launch energy at or below which a ray stops, as in `resume`.
 
-    start: Carry = (jnp.asarray(0), key, jnp.asarray(lanes), rays, Deposit.zeros(scene))
-    _, _, _, rays, deposit = jax.lax.while_loop(cond, body, start)
-    return rays, deposit
+    Returns
+    -------
+    tally
+        The tally. `Tally.estimate` gives the deposit, and `resume` adds more rays.
+    """
+    tally = Tally.empty(key, problem, lanes or num_rays)
+    return resume(tally, problem, num_rays, max_steps, refill_interval, extinction)
 
 
 # The entry point: the same run, with a `lanes` that sizes itself to the

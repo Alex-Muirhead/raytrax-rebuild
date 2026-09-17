@@ -13,6 +13,9 @@ manageable:
 - `scene.py` - the boundary. `build()` flattens a mesh into padded rectangular
   arrays; everything downstream is JAX.
 - `paths.py`, `medium.py`, `interactions.py`, `sources.py`, `transport.py` - JAX.
+- `problem.py` - `Problem`, the five inputs that say what is simulated: scene,
+  path, interactions, absorptivity and sources. Everything else a run takes
+  says how it is solved.
 - `tuning.py` - how wide a batch to march, never where a ray goes. It knows
   about the device, not about the physics, and imports nothing from the package.
 
@@ -31,13 +34,18 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   and the rest carried on. Nothing is created and a ray's energy only falls, so
   deposits plus what is still in flight plus what escaped equal what was
   launched.
-- **Every launched ray carries the same quantum, `sources.total / num_rays`.**
-  The deposit map is then in source power units whatever the lane count, and
-  refilling a dead lane mid-march cannot bias it. A terminating ray must be
-  emptied into the `Deposit` there and then, into cells, faces or `escaped`:
-  its lane is about to be handed to another ray, so anything left in it is
-  gone. `cells + faces + escaped` plus what the step cap caught still in flight
-  is therefore the launched total, at any lane count.
+- **Every launched ray carries energy 1, and only `Tally.estimate` gives
+  power.** `Tally.deposit` holds sums in ray units, and `estimate` scales them
+  by `sources.total / launched`. The answer is then in source power units
+  whatever the lane count or the number of runs, and refilling a dead lane
+  mid-march cannot bias it. A terminating ray must be emptied into the
+  `Deposit` there and then, into cells, faces or `escaped`: its lane is about to
+  be handed to another ray, so anything left in it is gone. `cells + faces +
+  escaped` plus what the step cap caught still in flight is therefore
+  `launched`, at any lane count.
+- **A tally is extended only on the problem it was run on.** `resume` adds
+  rays to the sums and continues the rays in flight, and nothing checks that
+  the `Problem` is the same one. The lane count is fixed by `Tally.empty`.
 - **Cell and face emission are in the same units, so one draw over
   `Sources.cumulative` picks between them.** Volume emission is isotropic;
   surface emission is cosine-weighted about the inward normal.
@@ -105,16 +113,21 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
   decorator is the only place a width is *chosen*: leaving `lanes` out asks for
   that choice and accepts being narrowed on an overrun, while a lane count the
   caller passes is marched exactly as given, so the `RESOURCE_EXHAUSTED` reaches
-  them. `launch_and_march` still clamps the width it is given to `num_rays`,
-  which is bookkeeping and not tuning: every lane is launched, and a lane past
-  the budget carries a quantum the source never emitted.
+  them. The width does not depend on `num_rays`: a lane past the budget is never
+  refilled and stays empty, so a later `resume` with any ray count reuses the
+  same compiled loop.
 - **The first batch is drawn inside the same `jit` as the march.** Drawn
   outside it the sampling is a second executable, and its buffers cannot be
   reused as march scratch; on the re-entry case that cost a fifth of the peak.
+  `Tally.empty` therefore samples nothing, and the first refill in `extend`
+  launches the first rays.
 - **`march` takes exactly `steps` steps, and never launches or stops.** It
   holds no source and no termination test, and its `Deposit` covers only its
-  own steps. `launch_and_march` owns everything else: it calls `march` for
-  `refill_interval` steps at a time, adds up the chunks, refills dead lanes
-  between them, and tests for the end only there. The extinction `floor` is an
-  absolute energy, `extinction * quantum`, set once by the driver; a floor
-  derived inside `march` from the live energies would drift between chunks.
+  own steps. `extend` owns everything else: it refills dead lanes, calls
+  `march` for `refill_interval` steps, adds the chunk to the tally, and tests
+  for the end only there. The extinction `floor` is an absolute energy, which
+  is `extinction` because rays launch with energy 1; a floor derived inside
+  `march` from the live energies would drift between chunks.
+- **`extend` is the only compiled driver.** `resume` passes `num_rays` to it as
+  an array and `launch_and_march` is plain Python, so a first run and every
+  resume at the same lane count and static settings share one compile.

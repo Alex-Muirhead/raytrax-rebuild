@@ -24,9 +24,10 @@ from pathlib import Path
 from typing import Any
 
 import jax
-from benchmark import CASES, Case, make_rays, prepare
+from benchmark import CASES, make_rays, prepare
 
 from raytrax import transport
+from raytrax.problem import Problem
 
 # `  %loop_multiply_fusion.1 = f64[...] fusion(...), kind=kLoop, calls=%fused_multiply.1, ...`
 FUSION = re.compile(r"^\s+%(\S+) = .*\bfusion\(.*\bcalls=%([^,\s]+)")
@@ -55,23 +56,19 @@ def scope_of(op_name: str) -> str:
     return "/".join(named) or "-"
 
 
-def compiled_text(case: Case, rays: transport.Rays, max_steps: int) -> str:
+def compiled_text(case: Problem, rays: transport.Rays, max_steps: int) -> str:
     """The optimised HLO for the same march the trace captures."""
     # pyrefly: ignore[missing-attribute] - it does not model what filter_jit returns
-    lowered = transport.march.lower(
-        jax.random.key(1), rays, case.scene, case.path, case.table, case.absorptivity, steps=max_steps
-    )
+    lowered = transport.march.lower(jax.random.key(1), rays, case, steps=max_steps)
     # equinox wraps the jax Compiled; the analyses live on the inner one.
     return lowered.compile().compiled.as_text()
 
 
-def capture(case: Case, rays: transport.Rays, max_steps: int, out: Path) -> Path:
+def capture(case: Problem, rays: transport.Rays, max_steps: int, out: Path) -> Path:
     """Trace one warmed march, and return the xplane file it wrote."""
 
     def march():
-        return transport.march(
-            jax.random.key(1), rays, case.scene, case.path, case.table, case.absorptivity, steps=max_steps
-        )
+        return transport.march(jax.random.key(1), rays, case, steps=max_steps)
 
     jax.block_until_ready(march())  # warm, so the trace holds no compile
     with jax.profiler.trace(str(out)):

@@ -21,7 +21,7 @@ import statistics
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -29,12 +29,11 @@ import numpy as np
 
 from raytrax import interactions, sources, transport
 from raytrax import scene as scene_module
-from raytrax.interactions import Interactions, Kind
+from raytrax.interactions import Kind
 from raytrax.io import vtk
 from raytrax.mesh import geometry
 from raytrax.paths import AxisymmetricPath, LinearPath
-from raytrax.scene import Scene
-from raytrax.sources import Sources
+from raytrax.problem import Problem
 
 MESHES = Path(__file__).resolve().parent.parent / "examples" / "meshes"
 
@@ -51,18 +50,8 @@ CASES = {
 }
 
 
-class Case(NamedTuple):
-    """One mesh and everything a march needs except the rays."""
-
-    scene: Scene
-    path: LinearPath | AxisymmetricPath
-    table: Interactions
-    source: Sources
-    absorptivity: jax.Array
-
-
-def prepare(name: str, kappa: float = 1.0) -> Case:
-    """Read one case into everything a march needs except the rays."""
+def prepare(name: str, kappa: float = 1.0) -> Problem:
+    """Read one case into the problem to simulate."""
     stem, axisymmetric = CASES[name]
     path = MESHES / f"{stem}.msh"
     if not path.exists():
@@ -87,12 +76,12 @@ def prepare(name: str, kappa: float = 1.0) -> Case:
 
     faces = np.flatnonzero(mesh.groups.face_group == mesh.groups.index(emitting))
     source = sources.build(jnp.zeros(mesh.topology.num_cells), geom.faces.area[faces], faces)
-    return Case(scene, trace_path, table, source, jnp.full(mesh.topology.num_cells, kappa))
+    return Problem(scene, trace_path, table, jnp.full(mesh.topology.num_cells, kappa), source)
 
 
-def make_rays(case: Case, lanes: int, seed: int) -> transport.Rays:
+def make_rays(case: Problem, lanes: int, seed: int) -> transport.Rays:
     """Launch `lanes` rays from the source, outside the timed region."""
-    return transport.launch(jax.random.key(seed), case.source, case.scene, case.path, lanes, case.source.total / lanes)
+    return transport.launch(jax.random.key(seed), case, lanes)
 
 
 def peak_mib() -> float | None:
@@ -103,16 +92,13 @@ def peak_mib() -> float | None:
     return stats["peak_bytes_in_use"] / 2**20
 
 
-def measure(case: Case, lanes: int, steps: int, repeats: int, seed: int, extinction: float) -> dict[str, Any]:
+def measure(case: Problem, lanes: int, steps: int, repeats: int, seed: int, extinction: float) -> dict[str, Any]:
     """Compile once, then time `repeats` marches, blocking on the whole result."""
     rays = make_rays(case, lanes, seed)
     key = jax.random.key(seed + 1)
-    floor = extinction * case.source.total / lanes
 
     def march():
-        return transport.march(
-            key, rays, case.scene, case.path, case.table, case.absorptivity, steps=steps, floor=floor
-        )
+        return transport.march(key, rays, case, steps=steps, floor=extinction)
 
     start = time.perf_counter()
     final, deposit = jax.block_until_ready(march())
@@ -125,7 +111,6 @@ def measure(case: Case, lanes: int, steps: int, repeats: int, seed: int, extinct
         runs.append(time.perf_counter() - start)
 
     median = statistics.median(runs)
-    emitted = float(case.source.total)
     return {
         "lanes": lanes,
         "steps": steps,
@@ -142,7 +127,7 @@ def measure(case: Case, lanes: int, steps: int, repeats: int, seed: int, extinct
         "lane_steps_per_s": lanes * steps / median,
         "peak_mib": peak_mib(),
         "alive_at_end": int(final.alive.sum()),
-        "deposited_fraction": float(deposit.cells.sum() + deposit.faces.sum()) / emitted,
+        "deposited_fraction": float(deposit.cells.sum() + deposit.faces.sum()) / lanes,
     }
 
 
