@@ -76,26 +76,21 @@ class Deposit(eqx.Module):
     faces: Float[Array, " nface"]
     escaped: Scalar
 
+    @classmethod
+    def zeros(cls, scene: Scene) -> "Deposit":
+        """Make an empty deposit for a mesh.
 
-class Launch(eqx.Module):
-    """The parameters to refill dead lanes from a source during a march.
+        Parameters
+        ----------
+        scene
+            The device arrays of the mesh.
 
-    Attributes
-    ----------
-    sources
-        The emission distribution of the new rays.
-    budget
-        The total number of rays to launch, including the first batch.
-    quantum
-        The energy of each new ray.
-    interval
-        The number of steps between refills.
-    """
-
-    sources: Sources
-    budget: Int[Array, ""]
-    quantum: Float[Array, ""]
-    interval: int = eqx.field(static=True)
+        Returns
+        -------
+        deposit
+            The deposit with no energy in it.
+        """
+        return cls(cells=jnp.zeros(scene.num_cells), faces=jnp.zeros(scene.num_faces), escaped=jnp.zeros(()))
 
 
 class Rays(eqx.Module):
@@ -119,11 +114,47 @@ class Rays(eqx.Module):
     alive: Bool[Array, " nray"]
 
 
+def launch(key: KeyArray, sources: Sources, scene: Scene, path: Path[Any], lanes: int, quantum: Scalar) -> Rays:
+    """Draw a batch of new rays from the sources.
+
+    Parameters
+    ----------
+    key
+        The PRNG key for the new rays.
+    sources
+        The emission distribution.
+    scene
+        The device arrays of the mesh.
+    path
+        The ray kinematics of the run.
+    lanes
+        The number of rays in the batch.
+    quantum
+        The energy of each new ray.
+
+    Returns
+    -------
+    rays
+        The batch, with all rays alive.
+    """
+    state, cell = jax.vmap(sample_source, in_axes=(0, None, None, None))(
+        jax.random.split(key, lanes), sources, scene, path
+    )
+    return Rays(cell=cell, state=state, energy=jnp.full(lanes, quantum), alive=jnp.ones(lanes, dtype=bool))
+
+
 @jax.named_scope("refill")
-def _refill(
-    key: KeyArray, rays: Rays, launched: Index, launch: Launch, scene: Scene, path: Path[Any]
+def refill(
+    key: KeyArray,
+    rays: Rays,
+    launched: Index,
+    budget: int,
+    quantum: Scalar,
+    sources: Sources,
+    scene: Scene,
+    path: Path[Any],
 ) -> tuple[Rays, Index]:
-    """Put new rays in dead lanes, up to the remaining launch budget.
+    """Put new rays in dead lanes, up to the launch budget.
 
     Parameters
     ----------
@@ -133,8 +164,12 @@ def _refill(
         The batch of rays.
     launched
         The number of rays launched before this refill.
-    launch
-        The refill parameters.
+    budget
+        The total number of rays to launch in the run.
+    quantum
+        The energy of each new ray.
+    sources
+        The emission distribution of the new rays.
     scene
         The device arrays of the mesh.
     path
@@ -150,17 +185,10 @@ def _refill(
     dead = ~rays.alive
     # Rank among dead lanes, so the budget is spent on a well-defined prefix.
     rank = jnp.cumulative_sum(dead) - 1
-    take = dead & (launched + rank < launch.budget)
+    take = dead & (launched + rank < budget)
 
-    keys = jax.random.split(key, rays.cell.shape[0])
-    state, cell = jax.vmap(sample_source, in_axes=(0, None, None, None))(keys, launch.sources, scene, path)
-
-    return Rays(
-        cell=_keep(take, cell, rays.cell),
-        state=_keep_tree(take, state, rays.state),
-        energy=_keep(take, jnp.full_like(rays.energy, launch.quantum), rays.energy),
-        alive=rays.alive | take,
-    ), launched + jnp.sum(take)
+    fresh = launch(key, sources, scene, path, rays.cell.shape[0], quantum)
+    return _keep_tree(take, fresh, rays), launched + jnp.sum(take)
 
 
 class StepResult(NamedTuple):
@@ -262,10 +290,6 @@ def step(
     )
 
 
-# (step index, key, rays launched so far, the batch, the accumulator)
-type Carry = tuple[Index, KeyArray, Index, Rays, Deposit]
-
-
 @eqx.filter_jit
 def march(
     key: KeyArray,
@@ -274,18 +298,17 @@ def march(
     path: Path[Any],
     interactions: Interactions,
     absorptivity: Float[Array, " ncell"],
-    max_steps: int = 1000,
-    launch: Launch | None = None,
-    extinction: float = 1e-8,
+    steps: int,
+    floor: float | Scalar = 0.0,
 ) -> tuple[Rays, Deposit]:
-    """March a batch of rays until all stop or the step limit is reached.
+    """Move each live ray across a fixed number of cells, and deposit energy along its path.
 
     Parameters
     ----------
     key
         The PRNG key for the march.
     rays
-        The first batch of rays.
+        The batch of rays.
     scene
         The device arrays of the mesh.
     path
@@ -294,35 +317,29 @@ def march(
         The interaction table.
     absorptivity
         The absorption coefficient of each cell.
-    max_steps
-        The largest number of steps. It is a safety limit: the march stops
-        when all rays stop.
-    launch
-        The parameters to refill dead lanes, or None to march only the first batch.
-    extinction
-        The fraction of the largest initial ray energy below which a ray stops
-        and deposits its remaining energy in its cell. At zero, only rays with
-        no energy stop.
+    steps
+        The number of steps. The march takes all of them, also when all rays stop earlier.
+    floor
+        The ray energy at or below which a ray stops and deposits its remaining
+        energy in its cell. At zero, only rays with no energy stop.
 
     Returns
     -------
     rays
-        The batch at the end of the march. Rays that are still alive hit the step limit.
+        The batch after the last step.
     deposit
-        The energy that the rays deposited, and the energy that escaped.
+        The energy that the rays deposited in these steps, and the energy that escaped.
     """
-    floor = extinction * jnp.max(rays.energy)
 
-    def body(carry: Carry) -> Carry:
-        index, key, launched, rays, deposit = carry
-        key, subkey, refill_key = jax.random.split(key, 3)
+    def body(carry: tuple[Rays, Deposit], key: KeyArray) -> tuple[tuple[Rays, Deposit], None]:
+        rays, deposit = carry
         # An extinct ray takes no step: its remainder is deposited where it
         # stands, so the balance is the same one a full march would have reached.
         extinct = rays.alive & (rays.energy <= floor)
         stepping = rays.alive & ~extinct
 
         crossed = jax.vmap(step, in_axes=(0, None, None, None, None, 0, 0, 0))(
-            jax.random.split(subkey, rays.cell.shape[0]),
+            jax.random.split(key, rays.cell.shape[0]),
             scene,
             path,
             interactions,
@@ -352,25 +369,14 @@ def march(
             energy=jnp.where(extinct | leaving, 0.0, _keep(stepping, crossed.energy, rays.energy)),
             alive=stepping & crossed.alive,
         )
+        return (rays, deposit), None
 
-        if launch is not None:
-            rays, launched = jax.lax.cond(
-                (index % launch.interval == 0) & (launched < launch.budget),
-                lambda: _refill(refill_key, rays, launched, launch, scene, path),
-                lambda: (rays, launched),
-            )
-        return index + 1, key, launched, rays, deposit
-
-    def cond(carry: Carry) -> Flag:
-        index, _, launched, rays, _ = carry
-        pending = launched < launch.budget if launch is not None else False
-        return (index < max_steps) & (jnp.any(rays.alive) | pending)
-
-    deposit = Deposit(cells=jnp.zeros(scene.num_cells), faces=jnp.zeros(scene.num_faces), escaped=jnp.zeros(()))
-    launched = jnp.sum(rays.alive)
-    start = jnp.asarray(0)
-    _, _, _, rays, deposit = jax.lax.while_loop(cond, body, (start, key, launched, rays, deposit))
+    (rays, deposit), _ = jax.lax.scan(body, (rays, Deposit.zeros(scene)), jax.random.split(key, steps))
     return rays, deposit
+
+
+# (steps taken, key, rays launched so far, the batch, the accumulator)
+type Carry = tuple[Index, KeyArray, Index, Rays, Deposit]
 
 
 @eqx.filter_jit
@@ -409,11 +415,11 @@ def launch_and_march(
         The number of rays in flight at one time, or None for `num_rays`. A
         value larger than `num_rays` becomes `num_rays`.
     max_steps
-        The largest number of steps. It is a safety limit: the march stops
-        when all rays stop.
+        The largest number of steps, rounded up to a multiple of
+        `refill_interval`. It is a safety limit: the run stops when all rays stop.
     refill_interval
-        The number of steps between refills of dead lanes. The best value
-        changes with the problem.
+        The number of steps between refills of dead lanes, and between checks
+        for the end of the run. The best value changes with the problem.
     extinction
         The fraction of the ray energy at launch below which a ray stops and
         deposits its remaining energy in its cell.
@@ -421,7 +427,7 @@ def launch_and_march(
     Returns
     -------
     rays
-        The batch at the end of the march. Rays that are still alive hit the step limit.
+        The batch at the end of the run. Rays that are still alive hit the step limit.
     deposit
         The energy that the rays deposited, and the energy that escaped. With the
         energy of the live rays, it sums to the energy of all launched rays.
@@ -430,30 +436,33 @@ def launch_and_march(
     # carrying a quantum the budget never counted.
     lanes = min(num_rays, lanes or num_rays)
 
-    key_launch, key_march = jax.random.split(key)
+    key, key_launch = jax.random.split(key)
     quantum = sources.total / num_rays
+    floor = extinction * quantum
+    rays = launch(key_launch, sources, scene, path, lanes, quantum)
 
-    state, cell = jax.vmap(sample_source, in_axes=(0, None, None, None))(
-        jax.random.split(key_launch, lanes), sources, scene, path
-    )
-    rays = Rays(cell=cell, state=state, energy=jnp.full(lanes, quantum), alive=jnp.ones(lanes, dtype=bool))
+    def body(carry: Carry) -> Carry:
+        taken, key, launched, rays, deposit = carry
+        key, key_march, key_refill = jax.random.split(key, 3)
+        rays, chunk = march(key_march, rays, scene, path, interactions, absorptivity, refill_interval, floor)
+        # Static, so a run that launches every ray at once compiles no sampling in the loop.
+        if lanes < num_rays:
+            rays, launched = jax.lax.cond(
+                launched < num_rays,
+                lambda: refill(key_refill, rays, launched, num_rays, quantum, sources, scene, path),
+                lambda: (rays, launched),
+            )
+        return taken + refill_interval, key, launched, rays, jax.tree.map(jnp.add, deposit, chunk)
 
-    launch = None
-    if lanes < num_rays:
-        launch = Launch(sources=sources, budget=jnp.asarray(num_rays), quantum=quantum, interval=refill_interval)
-    return march(
-        key_march,
-        rays,
-        scene,
-        path,
-        interactions,
-        absorptivity,
-        max_steps=max_steps,
-        launch=launch,
-        extinction=extinction,
-    )
+    def cond(carry: Carry) -> Flag:
+        taken, _, launched, rays, _ = carry
+        return (taken < max_steps) & (jnp.any(rays.alive) | (launched < num_rays))
+
+    start: Carry = (jnp.asarray(0), key, jnp.asarray(lanes), rays, Deposit.zeros(scene))
+    _, _, _, rays, deposit = jax.lax.while_loop(cond, body, start)
+    return rays, deposit
 
 
-# The entry point: the same march, with a `lanes` that sizes itself to the
+# The entry point: the same run, with a `lanes` that sizes itself to the
 # device when left out. A lane count passed explicitly is marched as given.
 trace = tuning.autosized("lanes")(launch_and_march)

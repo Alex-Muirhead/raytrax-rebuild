@@ -8,6 +8,24 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## `march` takes a fixed number of steps, and the driver refills and stops
+
+`nylkypzq`, 2026-09-17
+
+**Why:** `march` stepped rays, sampled sources into dead lanes through an
+optional `Launch`, and decided when to stop, all in one `while_loop`. A
+fixed-step `scan` is only the geometry and bookkeeping, and it is the unit that
+the benchmark and the kernel profile time. `launch_and_march` now holds the
+source, the budget and the end test, and `Launch` is gone. On the P620,
+slab_planar went from 1.31 to 1.17 ms per step at 65536 lanes, and a whole
+reentry run went from 1.96 to 1.85 s.
+**Instead of:** One `while_loop` with a `lax.cond` refill inside each step and
+`launch is not None` branches in its body and its end test.
+**Cost:** The end is tested only between chunks, so `max_steps` rounds up to a
+multiple of `refill_interval`, and a finished batch can take up to
+`refill_interval - 1` extra steps. A direct `march` call no longer ends early,
+and `scan` puts `eval_jaxpr` in every `op_name`.
+
 ## Unit tests check a few exact or seeded cases, not hundreds of random ones
 
 `zysptvsx`, 2026-09-17
@@ -346,7 +364,7 @@ would have made the dead work cheaper rather than absent.
 **Why:** `jnp.sort` under `vmap` lowers to a cub segmented radix sort over the
 whole batch, at 206 registers per thread and 9.4% occupancy. It was 90.7% of
 every source sampling, which made one full-batch sample cost 2.0 s, or five
-times an entire 400-step march, and `_refill` pays it every few steps. A network
+times an entire 400-step march, and `refill` pays it every few steps. A network
 of at most three comparisons returns the same doubles about 2000 times faster,
 so `transport.trace` went from 3.6 to 427 thousand rays per second at four times
 the lane count.

@@ -128,20 +128,15 @@ def _(geom, kappa, mesh, num_rays, scene, source, table, trace_path):
     _path = trace_path
     key_launch, key_march = jax.random.split(jax.random.key(4))
 
-    # Sampling explicitly rather than through `transport.trace` keeps the launch
-    # states around for the ray-path plot below.
-    launch_state, launch_cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-        jax.random.split(key_launch, _rays), source, scene, _path
-    )
-    initial = transport.Rays(
-        cell=launch_cell,
-        state=launch_state,
-        energy=jnp.full(_rays, source.total / _rays),
-        alive=jnp.ones(_rays, dtype=bool),
-    )
+    # Launching and marching explicitly rather than through `transport.trace`
+    # keeps the launch states around for the ray-path plot below.
+    quantum = source.total / _rays
+    initial = transport.launch(key_launch, source, scene, _path, _rays, quantum)
     absorptivity = jnp.full(mesh.topology.num_cells, kappa.value)
 
-    final, deposit = transport.march(key_march, initial, scene, _path, table, absorptivity, max_steps=4000)
+    final, deposit = transport.march(
+        key_march, initial, scene, _path, table, absorptivity, steps=4000, floor=1e-8 * quantum
+    )
     heating = np.asarray(deposit.cells) / geom.cells.volume
     return deposit, final, heating, initial
 
@@ -176,7 +171,7 @@ def _(axisymmetric, deposit, final, initial, mesh, source):
     {int(final.alive.sum()):,} of {initial.energy.size:,} rays ran out of steps. A mirrored
     box keeps a few rays bouncing long after they carry anything, so judge
     convergence by the accounting error above rather than by that count --
-    raising `max_steps` here shrinks the count without moving the answer.
+    raising `steps` here shrinks the count without moving the answer.
     """)
     return
 

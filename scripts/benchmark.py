@@ -5,7 +5,7 @@
 
 Reports compile time and run time separately, because `march` carries no
 `static_argnums` and takes its statics implicitly, so every distinct
-(case, lanes, max_steps, extinction, refill_interval) is a fresh compile.
+(case, lanes, steps) is a fresh compile.
 
 Timing follows the JAX guide: warm up once, then block on the whole returned
 pytree, not one array, or the numbers measure async dispatch instead of compute.
@@ -92,15 +92,7 @@ def prepare(name: str, kappa: float = 1.0) -> Case:
 
 def make_rays(case: Case, lanes: int, seed: int) -> transport.Rays:
     """Launch `lanes` rays from the source, outside the timed region."""
-    state, cell = jax.vmap(sources.sample, in_axes=(0, None, None, None))(
-        jax.random.split(jax.random.key(seed), lanes), case.source, case.scene, case.path
-    )
-    return transport.Rays(
-        cell=cell,
-        state=state,
-        energy=jnp.full(lanes, case.source.total / lanes),
-        alive=jnp.ones(lanes, dtype=bool),
-    )
+    return transport.launch(jax.random.key(seed), case.source, case.scene, case.path, lanes, case.source.total / lanes)
 
 
 def peak_mib() -> float | None:
@@ -111,14 +103,15 @@ def peak_mib() -> float | None:
     return stats["peak_bytes_in_use"] / 2**20
 
 
-def measure(case: Case, lanes: int, max_steps: int, repeats: int, seed: int, extinction: float) -> dict[str, Any]:
+def measure(case: Case, lanes: int, steps: int, repeats: int, seed: int, extinction: float) -> dict[str, Any]:
     """Compile once, then time `repeats` marches, blocking on the whole result."""
     rays = make_rays(case, lanes, seed)
     key = jax.random.key(seed + 1)
+    floor = extinction * case.source.total / lanes
 
     def march():
         return transport.march(
-            key, rays, case.scene, case.path, case.table, case.absorptivity, max_steps=max_steps, extinction=extinction
+            key, rays, case.scene, case.path, case.table, case.absorptivity, steps=steps, floor=floor
         )
 
     start = time.perf_counter()
@@ -135,7 +128,7 @@ def measure(case: Case, lanes: int, max_steps: int, repeats: int, seed: int, ext
     emitted = float(case.source.total)
     return {
         "lanes": lanes,
-        "max_steps": max_steps,
+        "steps": steps,
         "extinction": extinction,
         "cells": int(case.scene.num_cells),
         "faces": int(case.scene.num_faces),
@@ -145,12 +138,9 @@ def measure(case: Case, lanes: int, max_steps: int, repeats: int, seed: int, ext
         "median_s": median,
         "min_s": min(runs),
         "spread_s": max(runs) - min(runs),
-        "ms_per_step": median / max_steps * 1e3,
-        "lane_steps_per_s": lanes * max_steps / median,
+        "ms_per_step": median / steps * 1e3,
+        "lane_steps_per_s": lanes * steps / median,
         "peak_mib": peak_mib(),
-        # `march` stops when every lane dies, so the step cap only bounds the
-        # work when rays are still alive at the end. Without that the derived
-        # per-step numbers are a lower bound on the true cost.
         "alive_at_end": int(final.alive.sum()),
         "deposited_fraction": float(deposit.cells.sum() + deposit.faces.sum()) / emitted,
     }
@@ -199,7 +189,7 @@ if __name__ == "__main__":
     parser.add_argument("--ladder", action="store_true", help="sweep lanes in powers of two instead")
     parser.add_argument("--from-power", type=int, default=13)
     parser.add_argument("--to-power", type=int, default=22)
-    parser.add_argument("--max-steps", type=int, default=400)
+    parser.add_argument("--steps", type=int, default=400)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--extinction", type=float, default=1e-8, help="share of a quantum below which a ray stops")
     parser.add_argument("--kappa", type=float, default=1.0)
@@ -218,21 +208,18 @@ if __name__ == "__main__":
 
     case = prepare(args.case, args.kappa)
     lanes = [1 << p for p in range(args.from_power, args.to_power + 1)] if args.ladder else [args.lanes]
-    print(f"# {args.case}: cells={case.scene.num_cells} faces={case.scene.num_faces} max_steps={args.max_steps}")
+    print(f"# {args.case}: cells={case.scene.num_cells} faces={case.scene.num_faces} steps={args.steps}")
     print(HEADER)
 
     records = []
     for count in lanes:
         try:
-            record = measure(case, count, args.max_steps, args.repeats, args.seed, args.extinction)
+            record = measure(case, count, args.steps, args.repeats, args.seed, args.extinction)
         except Exception as error:  # noqa: BLE001 - an OOM ends the ladder, not the run
             print(f"{count:>9}  FAILED  {type(error).__name__}: {str(error).splitlines()[0][:90]}")
             break
         records.append(record)
         print(row(record))
-
-    if records and records[-1]["alive_at_end"] == 0:
-        print("# note: no rays alive at the cap, so the march ended early and ms/step is a lower bound")
 
     if args.json:
         args.json.write_text(json.dumps({"environment": env, "case": args.case, "runs": records}, indent=2) + "\n")

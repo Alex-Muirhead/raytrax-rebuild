@@ -1,4 +1,3 @@
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,8 +10,6 @@ from raytrax.mesh import boundaries, geometry, topology
 from raytrax.paths import AxisymmetricPath, LinearPath
 from raytrax.scene import build as build_scene
 from tests.meshes import brick, brick_sides
-
-sample = eqx.filter_jit(jax.vmap(sources.sample, in_axes=(0, None, None, None)))
 
 
 @pytest.mark.parametrize("mode", ["3d", "2d", "axisymmetric"])
@@ -56,16 +53,16 @@ def test_tangent_slab(mode):
     hot = np.flatnonzero(groups.face_group == groups.index("xlo"))
     source = sources.build(jnp.zeros(mesh_topology.num_cells), mesh_geometry.faces.area[hot], hot)
 
-    key_rays, key_march = jax.random.split(jax.random.key(0))
-    state, cell = sample(jax.random.split(key_rays, num_rays), source, scene, path)
-    rays = transport.Rays(
-        cell=cell,
-        state=state,
-        energy=jnp.full(num_rays, source.total / num_rays),
-        alive=jnp.ones(num_rays, dtype=bool),
-    )
-    _, deposit = transport.march(
-        key_march, rays, scene, path, table, jnp.full(mesh_topology.num_cells, kappa), max_steps=4000
+    _, deposit = transport.trace(
+        jax.random.key(0),
+        scene,
+        path,
+        table,
+        jnp.full(mesh_topology.num_cells, kappa),
+        source,
+        num_rays=num_rays,
+        lanes=num_rays,
+        max_steps=4000,
     )
 
     # Rows of depth, one column per cell across the slab.

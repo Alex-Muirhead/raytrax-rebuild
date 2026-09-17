@@ -82,10 +82,12 @@ constants live in the `RayState` that `launch` builds.
 `trace` is `launch_and_march` decorated with `tuning.autosized("lanes")`:
 leaving `lanes` out takes the width from `tuning.device_width` and narrows it
 again on an overrun, while a lane count passed in is marched as given and lets
-the overrun raise. The march clamps whatever it gets to `num_rays`.
-Inside the march, launch and march share one `jit`, dead lanes are refilled
-every `refill_interval` steps, and a ray below the `extinction` share of its
-quantum is stopped and emptied where it stands. `tuning.lane_capacity` is the
+the overrun raise. `launch_and_march` clamps whatever it gets to `num_rays`.
+It launches the first batch and calls `march` in the same `jit`. `march` takes
+a fixed `steps` and never launches or stops; the driver calls it for
+`refill_interval` steps at a time, refills dead lanes between those chunks and
+stops there once every ray is spent. A ray at or below `floor`
+(`extinction * quantum`) is stopped and emptied where it stands. `tuning.lane_capacity` is the
 separate memory ceiling, and is no longer on the default path.
 
 ## Documents

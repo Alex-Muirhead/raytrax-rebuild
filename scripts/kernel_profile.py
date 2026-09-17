@@ -33,7 +33,8 @@ FUSION = re.compile(r"^\s+%(\S+) = .*\bfusion\(.*\bcalls=%([^,\s]+)")
 OP_NAME = re.compile(r'op_name="([^"]*)"')
 
 # Every op inside the loop carries this, and it says nothing about which op.
-TRACED_PREFIX = re.compile(r"^(?:jit\([^)]*\)/)*while/body/")
+# `scan` adds `eval_jaxpr`, and the refilling loop nests the march in its own body.
+TRACED_PREFIX = re.compile(r"^(?:(?:jit\([^)]*\)|while/body|eval_jaxpr)/)*")
 
 # `vmap(crossing)` is one of our `jax.named_scope`s, batched; `vmap()` and
 # `jit(nanmin)` are a transform and a jnp helper, and name nothing of ours.
@@ -58,7 +59,7 @@ def compiled_text(case: Case, rays: transport.Rays, max_steps: int) -> str:
     """The optimised HLO for the same march the trace captures."""
     # pyrefly: ignore[missing-attribute] - it does not model what filter_jit returns
     lowered = transport.march.lower(
-        jax.random.key(1), rays, case.scene, case.path, case.table, case.absorptivity, max_steps=max_steps
+        jax.random.key(1), rays, case.scene, case.path, case.table, case.absorptivity, steps=max_steps
     )
     # equinox wraps the jax Compiled; the analyses live on the inner one.
     return lowered.compile().compiled.as_text()
@@ -69,7 +70,7 @@ def capture(case: Case, rays: transport.Rays, max_steps: int, out: Path) -> Path
 
     def march():
         return transport.march(
-            jax.random.key(1), rays, case.scene, case.path, case.table, case.absorptivity, max_steps=max_steps
+            jax.random.key(1), rays, case.scene, case.path, case.table, case.absorptivity, steps=max_steps
         )
 
     jax.block_until_ready(march())  # warm, so the trace holds no compile

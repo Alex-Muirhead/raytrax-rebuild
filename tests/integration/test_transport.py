@@ -16,18 +16,20 @@ from tests.meshes import brick, make, mixed_3d, uniform_boundary
 sample = eqx.filter_jit(jax.vmap(sources.sample, in_axes=(0, None, None, None)))
 
 
-def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None, **march_kwargs):
-    path = path or LinearPath()
-    rays_key, march_key = jax.random.split(jax.random.key(seed))
-    state, cell = sample(jax.random.split(rays_key, num_rays), source, scene, path)
-    rays = transport.Rays(
-        cell=cell,
-        state=state,
-        energy=jnp.full(num_rays, source.total / num_rays),
-        alive=jnp.ones(num_rays, dtype=bool),
+def run(scene, source, kinds_table, seed=0, num_rays=20_000, kappa=1.0, max_steps=400, path=None, **trace_kwargs):
+    """Trace `num_rays` rays launched at once, so no lane is refilled."""
+    return transport.trace(
+        jax.random.key(seed),
+        scene,
+        path or LinearPath(),
+        kinds_table,
+        jnp.full(scene.num_cells, kappa),
+        source,
+        num_rays=num_rays,
+        lanes=num_rays,
+        max_steps=max_steps,
+        **trace_kwargs,
     )
-    absorptivity = jnp.full(scene.num_cells, kappa)
-    return transport.march(march_key, rays, scene, path, kinds_table, absorptivity, max_steps=max_steps, **march_kwargs)
 
 
 class TestEnergyConservation:
@@ -282,7 +284,7 @@ class TestReducedState:
             LinearPath(),
             uniform_boundary(Kind.SPECULAR),
             jnp.full(scene.num_cells, 0.5),
-            max_steps=200,
+            steps=200,
         )
         before = jnp.linalg.vector_norm(rays.state.tangent, axis=-1)
         after = jnp.linalg.vector_norm(final.state.tangent, axis=-1)
@@ -299,7 +301,7 @@ class TestReducedState:
             LinearPath(),
             uniform_boundary(Kind.ESCAPE),
             jnp.zeros(scene.num_cells),
-            max_steps=100,
+            steps=100,
         )
         assert not bool(jnp.any(final.alive)), "rays ran out of steps"
         chord = jnp.linalg.vector_norm(final.state.position - rays.state.position, axis=-1)

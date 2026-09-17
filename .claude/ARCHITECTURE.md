@@ -111,3 +111,10 @@ Breaking one of these gives a wrong answer that still runs, so they come first.
 - **The first batch is drawn inside the same `jit` as the march.** Drawn
   outside it the sampling is a second executable, and its buffers cannot be
   reused as march scratch; on the re-entry case that cost a fifth of the peak.
+- **`march` takes exactly `steps` steps, and never launches or stops.** It
+  holds no source and no termination test, and its `Deposit` covers only its
+  own steps. `launch_and_march` owns everything else: it calls `march` for
+  `refill_interval` steps at a time, adds up the chunks, refills dead lanes
+  between them, and tests for the end only there. The extinction `floor` is an
+  absolute energy, `extinction * quantum`, set once by the driver; a floor
+  derived inside `march` from the live energies would drift between chunks.
