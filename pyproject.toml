@@ -12,25 +12,26 @@ dependencies = [
     "numpy>=2.3.4",
 ]
 
-[project.optional-dependencies]
-mesh-generation = ["gmsh>=4.15.1"]
-visualisation = ["pyvista[io,colormaps]>=0.46.4"]
-
 [dependency-groups]
 dev = [
     "beartype>=0.22.9",
-    "gmsh>=4.15.1",
-    "marimo>=0.20.4",
-    "matplotlib>=3.10",
     "pyrefly>=0.57.1",
     "pytest>=9.0.2",
+    "raytrax-examples",
     "ruff>=0.15.7",
     "scipy>=1.16.3",
 ]
+visualisation = ["raytrax-examples[visualisation]"]
 profiling = [
     "tb-nightly>=2.21.0a20251023",
     "xprof-nightly>=2.24.2a20260915",
 ]
+
+[tool.uv.workspace]
+members = ["examples"]
+
+[tool.uv.sources]
+raytrax-examples = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.9.26,<0.12.0"]
@@ -45,7 +46,7 @@ ignore = ["F722", "UP037"]
 
 [tool.ruff.lint.per-file-ignores]
 # marimo cells end in a bare `return` that declares the cell's outputs
-"examples/*.py" = ["PLR1711"]
+"examples/*/*.py" = ["PLR1711"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

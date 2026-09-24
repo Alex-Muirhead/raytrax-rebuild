@@ -1,6 +1,9 @@
 """Generate the example meshes with gmsh.
 
-    uv run python examples/meshes/generate.py
+    uv run python -m raytrax_examples.meshes [which]
+
+The examples call `path` instead, which generates a mesh the first time it is
+asked for and reads the cached file after that.
 
 The plane is deliberately mixed tri/quad: one half is recombined into quads and
 the other left as triangles, so the two element types share an interior face.
@@ -17,17 +20,20 @@ clustering, because there is no boundary layer to resolve.
 """
 
 import argparse
+import functools
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import gmsh
 
-HERE = Path(__file__).parent
+# The editable install leaves this file at examples/src/raytrax_examples.
+MESHES = Path(__file__).resolve().parents[2] / "meshes"
 
 
-def cylinder(radius: float = 1.0, length: float = 1.0, mesh_size: float = 0.25, output: Path = HERE / "cylinder.msh"):
+def cylinder(radius: float = 1.0, length: float = 1.0, mesh_size: float = 0.25, output: Path = MESHES / "cylinder.msh"):
     """A tetrahedral cylinder with tagged end caps, axis along x."""
-    gmsh.initialize()
+    gmsh.initialize(interruptible=False)
     gmsh.model.add("cylinder")
 
     volume = gmsh.model.occ.addCylinder(-length / 2, 0, 0, length, 0, 0, radius)
@@ -43,18 +49,19 @@ def cylinder(radius: float = 1.0, length: float = 1.0, mesh_size: float = 0.25, 
     gmsh.option.setNumber("Mesh.MeshSizeFactor", mesh_size)
     gmsh.model.mesh.generate(dim=3)
     gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+    output.parent.mkdir(parents=True, exist_ok=True)
     gmsh.write(str(output))
     gmsh.finalize()
     print(f"wrote {output}")
 
 
-def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, output: Path = HERE / "plane.msh"):
+def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, output: Path = MESHES / "plane.msh"):
     """A 2D rectangle, quads on the lower half and triangles on the upper.
 
     It sits at y >= 0 so the same mesh reads either as an extruded slab or,
     revolved about y = 0, as the `(x, r)` half-plane of `cylinder`.
     """
-    gmsh.initialize()
+    gmsh.initialize(interruptible=False)
     gmsh.model.add("plane")
 
     lower = gmsh.model.occ.addRectangle(-width / 2, 0, 0, width, height / 2)
@@ -89,17 +96,18 @@ def plane(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.12, outp
     gmsh.model.mesh.setRecombine(2, quad_half)
     gmsh.model.mesh.generate(dim=2)
     gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+    output.parent.mkdir(parents=True, exist_ok=True)
     gmsh.write(str(output))
     gmsh.finalize()
     print(f"wrote {output}")
 
 
-def slab(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.07, output: Path = HERE / "slab.msh"):
+def slab(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.07, output: Path = MESHES / "slab.msh"):
     """A 2D rectangle with triangles scattered among quads, at varying cell size.
 
     Same geometry and groups as `plane`, so it substitutes for it anywhere.
     """
-    gmsh.initialize()
+    gmsh.initialize(interruptible=False)
     gmsh.model.add("slab")
 
     surface = gmsh.model.occ.addRectangle(-width / 2, 0, 0, width, height)
@@ -143,6 +151,7 @@ def slab(width: float = 1.0, height: float = 1.0, mesh_size: float = 0.07, outpu
 
     gmsh.model.mesh.generate(dim=2)
     gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+    output.parent.mkdir(parents=True, exist_ok=True)
     gmsh.write(str(output))
     gmsh.finalize()
     print(f"wrote {output}")
@@ -158,7 +167,7 @@ def reentry(
     standoff: float = 0.02,
     shock_angle: float = 60.0,
     mesh_size: float = 1.0,
-    output: Path = HERE / "reentry.msh",
+    output: Path = MESHES / "reentry.msh",
 ):
     """The shock layer around a Stardust-like capsule, as the (x, r) half-plane.
 
@@ -166,7 +175,7 @@ def reentry(
     are metres, the stagnation point is the origin, and the freestream runs
     along +x.
     """
-    gmsh.initialize()
+    gmsh.initialize(interruptible=False)
     gmsh.model.add("reentry")
 
     cone, aft = math.radians(cone_angle), math.radians(aft_angle)
@@ -249,28 +258,48 @@ def reentry(
 
     gmsh.model.mesh.generate(dim=2)
     gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+    output.parent.mkdir(parents=True, exist_ok=True)
     gmsh.write(str(output))
     gmsh.finalize()
     print(f"wrote {output}")
 
 
+BUILDERS: dict[str, Callable[..., None]] = {
+    "cylinder": cylinder,
+    # Coarse enough that a cut through it reads as individual cells.
+    "cylinder_coarse": functools.partial(cylinder, mesh_size=0.6),
+    "plane": plane,
+    "slab": slab,
+    "reentry": reentry,
+}
+
+
+def path(name: str) -> Path:
+    """Give the file of one named mesh, and generate it first if it does not exist.
+
+    Parameters
+    ----------
+    name
+        The key of the mesh in `BUILDERS`.
+
+    Returns
+    -------
+    path
+        The `.msh` file.
+    """
+    output = MESHES / f"{name}.msh"
+    if not output.exists():
+        BUILDERS[name](output=output)
+    return output
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "which", nargs="?", default="all", choices=["all", "cylinder", "coarse", "plane", "slab", "reentry"]
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("which", nargs="?", default="all", choices=["all", *BUILDERS])
     parser.add_argument("--mesh-size", type=float, default=None)
     args = parser.parse_args()
 
     size = {} if args.mesh_size is None else {"mesh_size": args.mesh_size}
-    if args.which in ("all", "cylinder"):
-        cylinder(**size)
-    if args.which in ("all", "coarse"):
-        # Coarse enough that a cut through it reads as individual cells.
-        cylinder(mesh_size=0.6, output=HERE / "cylinder_coarse.msh")
-    if args.which in ("all", "plane"):
-        plane(**size)
-    if args.which in ("all", "slab"):
-        slab(**size)
-    if args.which in ("all", "reentry"):
-        reentry(**size)
+    for name, builder in BUILDERS.items():
+        if args.which in ("all", name):
+            builder(output=MESHES / f"{name}.msh", **size)

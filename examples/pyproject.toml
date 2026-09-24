@@ -1,0 +1,23 @@
+[project]
+name = "raytrax-examples"
+version = "0.1.0"
+description = "Shared code for the raytrax examples and scripts"
+requires-python = ">=3.14"
+dependencies = [
+    "gmsh>=4.15.1",
+    "marimo>=0.20.4",
+    "matplotlib>=3.10",
+    "raytrax",
+    "scipy>=1.16.3",
+    "typst>=0.15.0",
+]
+
+[project.optional-dependencies]
+visualisation = ["pyvista[io,colormaps]>=0.46.4"]
+
+[tool.uv.sources]
+raytrax = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.12.0"]
+build-backend = "uv_build"

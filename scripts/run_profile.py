@@ -9,8 +9,7 @@ the device kernels the march spent its time in. `scripts/kernel_profile.py` is
 the same kernel table for `march` alone.
 
 The trace it writes covers one warmed `trace` call and opens in xprof or
-tensorboard. Needs the `profiling` dependency group. Meshes come from
-`examples/meshes/generate.py` and are not committed.
+tensorboard. Needs the `profiling` dependency group.
 """
 
 import argparse
@@ -23,8 +22,9 @@ from pathlib import Path
 from typing import Any
 
 import jax
-from benchmark import CASES, environment, prepare
 from kernel_profile import kernel_rows
+from raytrax_examples.benchmark import environment
+from raytrax_examples.cases import CASES, prepare
 
 from raytrax import interactions, jit_tools, sources, transport
 from raytrax import scene as scene_module
@@ -38,6 +38,7 @@ BUILD_STAGES = (
     (vtk, "read"),
     (geometry, "revolve"),
     (scene_module, "build"),
+    (scene_module, "validate"),
     (interactions, "build"),
     (sources, "build"),
 )
@@ -73,7 +74,7 @@ def timed(stages: tuple[tuple[Any, str], ...]) -> Iterator[dict[str, float]]:
 def build(name: str, kappa: float) -> tuple[Problem, dict[str, float]]:
     """Read one case, timing every host-side stage it passes through."""
     with timed(BUILD_STAGES) as elapsed:
-        case = prepare(name, kappa)
+        case = prepare(name, kappa).problem
     return case, elapsed
 
 

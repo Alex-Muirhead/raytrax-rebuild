@@ -12,8 +12,7 @@ still resolves, and `--attribute` names each kernel by the `jax.named_scope`s
 fused into it, then rolls the kernel times up per scope. XLA keeps no source
 file or line, so those scopes are the only way back to source.
 
-Needs the `profiling` dependency group. Meshes come from
-`examples/meshes/generate.py` and are not committed.
+Needs the `profiling` dependency group.
 """
 
 import argparse
@@ -24,7 +23,8 @@ from pathlib import Path
 from typing import Any
 
 import jax
-from benchmark import CASES, make_rays, prepare
+from raytrax_examples.benchmark import make_rays
+from raytrax_examples.cases import CASES, prepare
 
 from raytrax import transport
 from raytrax.problem import Problem
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     if args.x32:
         jax.config.update("jax_enable_x64", False)
 
-    case = prepare(args.case)
+    case = prepare(args.case).problem
     rays = make_rays(case, args.lanes, 0)
     text = compiled_text(case, rays, args.max_steps)
     plane = capture(case, rays, args.max_steps, args.out)

@@ -1,7 +1,7 @@
 """Time `transport.march` over a mesh, lane and path ladder.
 
-    uv run python scripts/benchmark.py --case slab_planar --lanes 65536
-    uv run python scripts/benchmark.py --ladder --json bench.json
+    uv run python -m raytrax_examples.benchmark --case slab_planar --lanes 65536
+    uv run python -m raytrax_examples.benchmark --ladder --json bench.json
 
 Reports compile time and run time separately, because `march` carries no
 `static_argnums` and takes its statics implicitly, so every distinct
@@ -10,8 +10,8 @@ Reports compile time and run time separately, because `march` carries no
 Timing follows the JAX guide: warm up once, then block on the whole returned
 pytree, not one array, or the numbers measure async dispatch instead of compute.
 
-Set `JAX_PLATFORMS=cpu` to run the same ladder on the host. Meshes come from
-`examples/meshes/generate.py` and are not committed.
+Set `JAX_PLATFORMS=cpu` to run the same ladder on the host. The performance
+example runs the same `measure` over every case and writes it for the thesis.
 """
 
 import argparse
@@ -24,59 +24,10 @@ from pathlib import Path
 from typing import Any
 
 import jax
-import jax.numpy as jnp
-import numpy as np
 
-from raytrax import interactions, sources, transport
-from raytrax import scene as scene_module
-from raytrax.interactions import Kind
-from raytrax.io import vtk
-from raytrax.mesh import geometry
-from raytrax.paths import AxisymmetricPath, LinearPath
+from raytrax import transport
 from raytrax.problem import Problem
-
-MESHES = Path(__file__).resolve().parent.parent / "examples" / "meshes"
-
-# Mesh file, and whether it is read as the meridional half-plane. Mirrors
-# `prepare` in examples/convergence.py, which is a marimo app and cannot be
-# imported; the two must agree or the benchmark stops describing the study.
-CASES = {
-    "slab_planar": ("slab", False),
-    "slab_axisymmetric": ("slab", True),
-    "cylinder_coarse": ("cylinder_coarse", False),
-    "plane": ("plane", False),
-    "cylinder": ("cylinder", False),
-    "reentry": ("reentry", True),
-}
-
-
-def prepare(name: str, kappa: float = 1.0) -> Problem:
-    """Read one case into the problem to simulate."""
-    stem, axisymmetric = CASES[name]
-    path = MESHES / f"{stem}.msh"
-    if not path.exists():
-        raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
-
-    mesh = vtk.read(path)
-    geom = geometry.revolve(mesh.geometry) if axisymmetric else mesh.geometry
-    trace_path = AxisymmetricPath() if axisymmetric else LinearPath()
-    scene = scene_module.build(mesh.topology, geom, mesh.groups)
-
-    if stem == "reentry":
-        kinds = {"shock": Kind.ABSORB, "wall": Kind.ABSORB, "outflow": Kind.ESCAPE, "axis": Kind.ABSORB}
-        emitting = "shock"
-    else:
-        kinds = {"hot_end": Kind.ABSORB, "wall": Kind.ABSORB, "lateral": Kind.SPECULAR}
-        if "axis" in mesh.groups.names:
-            # Revolved, the y = 0 edge is the axis; extruded it is just another
-            # side and has to match `lateral` or the slab stops being symmetric.
-            kinds["axis"] = Kind.ABSORB if axisymmetric else Kind.SPECULAR
-        emitting = "hot_end"
-    table = interactions.build(mesh.groups, kinds)
-
-    faces = np.flatnonzero(mesh.groups.face_group == mesh.groups.index(emitting))
-    source = sources.build(jnp.zeros(mesh.topology.num_cells), geom.faces.area[faces], faces)
-    return Problem(scene, trace_path, table, jnp.full(mesh.topology.num_cells, kappa), source)
+from raytrax_examples.cases import CASES, prepare
 
 
 def make_rays(case: Problem, lanes: int, seed: int) -> transport.Rays:
@@ -191,7 +142,7 @@ if __name__ == "__main__":
     env = environment()
     print(f"# {env['device_kind']} ({env['platform']}) | jax {env['jax']} | x64={env['x64']}")
 
-    case = prepare(args.case, args.kappa)
+    case = prepare(args.case, args.kappa).problem
     lanes = [1 << p for p in range(args.from_power, args.to_power + 1)] if args.ladder else [args.lanes]
     print(f"# {args.case}: cells={case.scene.num_cells} faces={case.scene.num_faces} steps={args.steps}")
     print(HEADER)
