@@ -23,14 +23,14 @@ from typing import Any
 
 import jax
 from kernel_profile import kernel_rows
-from raytrax_examples.benchmark import environment
-from raytrax_examples.cases import CASES, prepare
 
 from raytrax import interactions, jit_tools, sources, transport
 from raytrax import scene as scene_module
 from raytrax.io import vtk
 from raytrax.mesh import geometry
 from raytrax.problem import Problem
+from raytrax_examples.benchmark import environment
+from raytrax_examples.cases import CASES, prepare
 
 # The host-side pipeline, as `prepare` calls it. Patched rather than inlined so
 # there is one description of the pipeline and the timings cannot drift from it.

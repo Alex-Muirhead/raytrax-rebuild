@@ -37,15 +37,24 @@ dispatches op by op and costs seconds.
 annotations are only enforced under pytest. A shape bug can therefore pass in a
 script and fail in a test.
 
-Examples are marimo notebooks and need their meshes generated first; they are
-not committed:
+Examples are marimo notebooks, one directory each under `examples/`, one per
+thesis section. Each writes `data/` and compiles its `figures.typ` into
+`figures/`; neither is committed. Code they share is the `raytrax-examples`
+workspace member in `examples/src/raytrax_examples`, installed by the dev group
+and not part of `raytrax`. Meshes are generated on first use into
+`examples/meshes/`. `examples/README.md` is the map.
 
 ```
-uv run python examples/meshes/generate.py
-uv run marimo edit examples/tracing.py          # the tutorial, matplotlib only
-uv run python scripts/benchmark.py --case slab_planar --lanes 65536
+uv run python examples/reentry/reentry.py       # one example, headless: data/ and figures/
+uv run marimo edit examples/tutorial/tutorial.py   # the tutorial, matplotlib only
+uv run python -m raytrax_examples.meshes        # regenerate every mesh
+uv run python -m raytrax_examples.benchmark --case slab_planar --lanes 65536
 uv run --group profiling python scripts/run_profile.py --case reentry   # stages and kernels of a whole run
 ```
+
+`uv sync --group visualisation` adds pyvista for the 3D renders. A plain
+`uv sync` removes the `visualisation` and `profiling` groups; `uv sync
+--all-groups` keeps everything.
 
 `JAX_PLATFORMS=cpu` runs the same code on the host. `.envrc` sets
 `XLA_PYTHON_CLIENT_PREALLOCATE=false`.

@@ -19,14 +19,13 @@ wheels/
 *.vtk
 *.vtu
 
-# Example artifacts
-examples/figures/
+# Example artifacts: notebook output, compiled figures, and the mesh cache
+examples/*/data/
+examples/*/figures/
+examples/meshes/
 
 # Doc files from typ
 *.pdf
-
-# Generated figures
-examples/figures/
 
 # Profiling artifacts
 profile/

@@ -22,8 +22,9 @@ with app.setup:
     from raytrax.mesh import geometry
     from raytrax.paths import RADIAL, AxisymmetricPath, LinearPath
     from raytrax.problem import Problem
+    from raytrax_examples import colours, meshes
 
-    MESHES = Path(__file__).parent / "meshes"
+    DATA = Path(__file__).parent / "data"
 
 
 @app.cell(hide_code=True)
@@ -67,11 +68,7 @@ def _():
 def _(domain):
     # The axisymmetric domain is the plane mesh, read differently.
     axisymmetric = domain.value == "axisymmetric"
-    path = MESHES / f"{'plane' if axisymmetric else domain.value}.msh"
-    if not path.exists():
-        raise FileNotFoundError(f"{path} missing - run `uv run python examples/meshes/generate.py`")
-
-    mesh = vtk.read(path)
+    mesh = vtk.read(meshes.path("plane" if axisymmetric else domain.value))
     # Revolving reweights cells as rings, which the axisymmetric path assumes.
     geom = geometry.revolve(mesh.geometry) if axisymmetric else mesh.geometry
     trace_path = AxisymmetricPath() if axisymmetric else LinearPath()
@@ -270,7 +267,7 @@ def _(axisymmetric, heating, mesh):
         for index, element in enumerate(topology.block_elements):
             rows = np.flatnonzero(topology.cell_block == index)
             corners = vertices[topology.cell_vertices[rows][:, : element.num_vertices]]
-            polys = PolyCollection(corners, cmap="magma", norm=norm, linewidths=0)
+            polys = PolyCollection(corners, cmap=colours.SEQUENTIAL, norm=norm, linewidths=0)
             polys.set_array(heating[rows])
             ax.add_collection(polys)
 
@@ -278,7 +275,7 @@ def _(axisymmetric, heating, mesh):
         ax.autoscale_view()
         ax.set_xlabel("x")
         ax.set_ylabel("r" if axisymmetric else "y")
-        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="magma"), ax=ax, label="Volumetric heating")
+        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=colours.SEQUENTIAL), ax=ax, label="Volumetric heating")
         return fig
 
     _field()
@@ -303,7 +300,7 @@ def _(axisymmetric, final, initial, mesh):
         # axisymmetric ray followed a hyperbola rather than this chord.
         show = slice(0, 200)
         chords = np.stack([initial.state.position[show], final.state.position[show]], axis=1)
-        paths = LineCollection(list(chords), cmap="viridis", linewidths=0.6)
+        paths = LineCollection(list(chords), cmap="lilaq.viridis", linewidths=0.6)
         paths.set_array(np.asarray(final.state.travel[show]))
         ax.add_collection(paths)
 
@@ -320,7 +317,8 @@ def _(axisymmetric, final, initial, mesh):
 
 @app.cell(hide_code=True)
 def _(deposit, domain, geom, heating, hot, mesh):
-    _out = MESHES / f"{domain.value}_heating.vtu"
+    DATA.mkdir(exist_ok=True)
+    _out = DATA / f"{domain.value}_heating.vtu"
     _face = np.asarray(deposit.faces) / np.where(geom.faces.area > 0, geom.faces.area, np.inf)
     vtk.write(_out, mesh, {"heating": heating})
     mo.md(f"Wrote `{_out.name}` - cell heating, openable in ParaView. Peak wall flux {_face[hot].max():.4f}.")

@@ -8,6 +8,22 @@ file states the argument behind them, which the conventions deliberately keep
 out of docstrings, comments and commit messages. Keep entries to the four lines
 below; anything longer belongs in `docs/`.
 
+## Example code is a workspace member, and figures are drawn in Typst
+
+`uqtrstoy`, 2026-09-24
+
+**Why:** The notebooks and scripts each carried a copy of the case setup, the
+tangent-slab solution and the image export. As the `raytrax-examples` package,
+installed editable through the dev group, they import one copy, and pyrefly
+resolves it with no search-path entry. The thesis imports each example's
+`figures.typ`, so the figures take their fonts from the thesis, and the notebook
+shows the same compiled figures.
+**Instead of:** Adding `examples/` to the pyrefly and `sys.path` search paths,
+which type-checks but fails at runtime unless the repository root is on the
+path; or styling each figure in matplotlib and pyvista.
+**Cost:** Field images leave the notebook as bare PNGs with a JSON sidecar of
+bounds and colormap stops, and Typst has to line them up with its own axes.
+
 ## `extend` is a compiled method of `Tally`
 
 `uluuwvpm`, 2026-09-17

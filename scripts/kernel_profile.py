@@ -23,11 +23,11 @@ from pathlib import Path
 from typing import Any
 
 import jax
-from raytrax_examples.benchmark import make_rays
-from raytrax_examples.cases import CASES, prepare
 
 from raytrax import transport
 from raytrax.problem import Problem
+from raytrax_examples.benchmark import make_rays
+from raytrax_examples.cases import CASES, prepare
 
 # `  %loop_multiply_fusion.1 = f64[...] fusion(...), kind=kLoop, calls=%fused_multiply.1, ...`
 FUSION = re.compile(r"^\s+%(\S+) = .*\bfusion\(.*\bcalls=%([^,\s]+)")

@@ -2,7 +2,7 @@
 
 Line data leaves as CSV. A field leaves as a bare PNG of its fills alone, with a
 JSON sidecar that gives the `(xmin, ymin, xmax, ymax)` viewbox the image covers
-and the colorbar or legend to draw around it.
+and the colour bar or legend to draw around it.
 """
 
 import json
@@ -21,8 +21,8 @@ from raytrax.io import vtk
 
 type Bounds = tuple[float, float, float, float]
 
-# Enough samples that a Typst gradient through them is indistinguishable from the colormap.
-COLORMAP_STOPS = 32
+# Enough samples that a Typst gradient through them is indistinguishable from the colour map.
+COLOURMAP_STOPS = 32
 
 
 def save_csv(path: Path, columns: Sequence[np.ndarray], header: str) -> Path:
@@ -84,32 +84,35 @@ def viewbox(bounds: Bounds) -> dict[str, float]:
     return {"xmin": float(xmin), "ymin": float(ymin), "xmax": float(xmax), "ymax": float(ymax)}
 
 
-def colorbar(low: float, high: float, cmap: str, label: str) -> dict[str, Any]:
-    """Give the sidecar entry the Typst `colorbar` reads.
+def colourbar(low: float, high: float, cmap: str, label: str, unit: str | None = None) -> dict[str, Any]:
+    """Give the sidecar entry the Typst `colourbar` reads.
 
     Parameters
     ----------
     low
-        The value at the bottom of the colormap.
+        The value at the bottom of the colour map.
     high
-        The value at the top of the colormap.
+        The value at the top of the colour map.
     cmap
-        The name of the matplotlib colormap the image was drawn with.
+        The name of the matplotlib colour map the image was drawn with.
     label
-        The axis label of the colorbar.
+        The name of the quantity on the colour bar.
+    unit
+        The unit of the quantity in zero's `quan` syntax, such as `"GW/m^3"`, or None if it has none.
 
     Returns
     -------
-    colorbar
-        The range, label and colormap, with the colormap sampled as hex stops.
+    colourbar
+        The range, label, unit and colour map, with the colour map sampled as hex stops.
     """
-    colours = mpl.colormaps[cmap](np.linspace(0.0, 1.0, COLORMAP_STOPS))
+    colours = mpl.colormaps[cmap](np.linspace(0.0, 1.0, COLOURMAP_STOPS))
     return {
         "min": float(low),
         "max": float(high),
-        "cmap": cmap,
+        "colourmap": cmap,
         "stops": [mpl.colors.to_hex(colour) for colour in colours],
         "label": label,
+        "unit": unit,
     }
 
 
@@ -154,7 +157,7 @@ def save_image(stem: Path, fig: Figure, bounds: Bounds, **metadata: Any) -> list
     bounds
         The `(xmin, ymin, xmax, ymax)` the figure covers.
     metadata
-        More sidecar entries, such as `colorbar` or `legend`.
+        More sidecar entries, such as `colourbar` or `legend`.
 
     Returns
     -------

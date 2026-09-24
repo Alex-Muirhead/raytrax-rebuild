@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 
 from raytrax.io import vtk
+from raytrax_examples import colours
 from raytrax_examples.export import Bounds
 
 # Must be set before pyvista imports vtk, and before any Plotter is built.
@@ -36,8 +37,6 @@ VTK_CELL = {
 # tilted towards the hot end so the gradient runs across. Position, focal
 # point, view up -- pyvista's camera_position format.
 CYLINDER_CAMERA = ((-0.9, 2.5, 1.0), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
-
-BLOCK_COLOURS = ("#4c72b0", "#dd8452", "#55a868", "#c44e52")
 
 
 def to_pyvista(mesh: vtk.Mesh, values: np.ndarray | None = None) -> pv.UnstructuredGrid:
@@ -277,7 +276,7 @@ def draw(
     mesh: vtk.Mesh,
     values: np.ndarray | None = None,
     ragged: bool = True,
-    cmap: str | list[str] = "magma",
+    cmap: str | list[str] = colours.SEQUENTIAL,
     label: str = "Volumetric heating",
     bar: bool = True,
     tight_bounds: Bounds | None = None,
@@ -312,7 +311,7 @@ def draw(
     else:
         # Pinned to the full field, not the piece pyvista actually draws:
         # `half_cut` in 3D would otherwise narrow the range to whatever
-        # survives the cut, and the exported colorbar range would lie.
+        # survives the cut, and the exported colour bar range would lie.
         if symmetric:
             bound = float(np.nanmax(np.abs(values)))
             clim = (-bound, bound)
@@ -386,7 +385,7 @@ def draw_mesh(
         code[mesh.topology.cell_block == index] = names.index(element.name)
 
     # One flat colour per element type and a legend, not a ramp.
-    palette = list(BLOCK_COLOURS[: len(names)])
+    palette = colours.cycle()[: len(names)]
     draw(plotter, mesh, code, ragged, cmap=palette, label="", bar=False, tight_bounds=tight_bounds)
     entries = [{"label": name, "colour": colour} for name, colour in zip(names, palette, strict=True)]
     if legend:
