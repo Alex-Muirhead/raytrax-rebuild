@@ -9,13 +9,13 @@ with app.setup:
     import marimo as mo
     import numpy as np
 
-    from raytrax_examples import benchmark, cases, export
+    from raytrax_examples import benchmark, export
+    from raytrax_examples.cases import cylinder, reentry, slab
     from raytrax_examples.typst import compile_figures
 
     HERE = Path(__file__).parent
     DATA = HERE / "data"
 
-    CASES = ("slab_planar", "slab_axisymmetric", "cylinder", "reentry")
     COLUMNS = ("lanes", "compile_s", "median_s", "min_s", "ms_per_step", "lane_steps_per_s", "peak_mib", "alive_at_end")
 
 
@@ -60,10 +60,15 @@ def _(powers, repeats, running, steps):
             return None
         low, high = powers.value
         lanes = [1 << power for power in range(low, high + 1)]
+        problems = {
+            "slab_planar": slab.case().problem,
+            "slab_axisymmetric": slab.case(axisymmetric=True).problem,
+            "cylinder": cylinder.case().problem,
+            "reentry": reentry.case().problem,
+        }
         results = {}
-        with mo.status.progress_bar(total=len(CASES) * len(lanes)) as bar:
-            for name in CASES:
-                problem = cases.prepare(name).problem
+        with mo.status.progress_bar(total=len(problems) * len(lanes)) as bar:
+            for name, problem in problems.items():
                 records = []
                 for count in lanes:
                     try:

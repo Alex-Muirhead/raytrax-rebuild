@@ -20,7 +20,8 @@ with app.setup:
     from raytrax.mesh import geometry
     from raytrax.paths import AxisymmetricPath
     from raytrax.problem import Problem
-    from raytrax_examples import cases, colours, export, meshes
+    from raytrax_examples import colours, export
+    from raytrax_examples.cases import reentry
     from raytrax_examples.typst import figure
 
     HERE = Path(__file__).parent
@@ -106,8 +107,8 @@ def _():
     layer is too narrow to pair cells off, which is what the element counts in
     the mesh figure show.
 
-    `reentry()` in `raytrax_examples/meshes.py` builds it, and every dimension
-    named above is a keyword argument there.
+    `mesh_file()` in `raytrax_examples/cases/reentry.py` builds it, and every
+    dimension named above is a constant at the top of that file.
     """)
     return
 
@@ -135,14 +136,14 @@ def _():
 
 @app.cell
 def _():
-    mesh = vtk.read(meshes.path("reentry"))
+    mesh = vtk.read(reentry.mesh_file())
     geom = geometry.revolve(mesh.geometry)
     scene = scene_module.build(mesh.topology, geom, mesh.groups)
     scene_module.validate(mesh.topology, geom)
 
-    shock = cases.group_faces(mesh, "shock")
-    wall = cases.group_faces(mesh, "wall")
-    axis = cases.group_faces(mesh, "axis")
+    shock = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("shock"))
+    wall = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("wall"))
+    axis = np.flatnonzero(mesh.groups.face_group == mesh.groups.index("axis"))
 
     # Nothing here is a mirror, so a ray is finished the first time it reaches
     # any boundary. ABSORB rather than ESCAPE on the shock and the wall, so that

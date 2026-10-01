@@ -11,14 +11,12 @@ with app.setup:
     import numpy as np
 
     from raytrax import transport
-    from raytrax_examples import cases, colours, export, profiles, render
+    from raytrax_examples import colours, export, profiles, render
+    from raytrax_examples.cases import cylinder, slab
     from raytrax_examples.typst import compile_figures
 
     HERE = Path(__file__).parent
     DATA = HERE / "data"
-
-    # The coarse cylinder is only drawn as a mesh; the others are the verification cases.
-    CASES = ("slab_planar", "slab_axisymmetric", "cylinder_coarse", "cylinder")
 
 
 @app.cell(hide_code=True)
@@ -85,16 +83,22 @@ def _():
 
 
 @app.function
-def solve(name, absorptivity, rays):
+def solve(case, rays):
     """Trace one case, returning it with the volumetric heating of each cell."""
-    case = cases.prepare(name, absorptivity)
     tally = transport.trace(jax.random.key(4), case.problem, num_rays=rays, max_steps=4000)
     return case, np.asarray(tally.estimate(case.problem).cells) / case.geom.cells.volume
 
 
 @app.cell
 def _(kappa, num_rays):
-    results = {name: solve(name, kappa.value, int(num_rays.value)) for name in CASES}
+    rays = int(num_rays.value)
+    # The coarse cylinder is only drawn as a mesh; the others are the verification cases.
+    results = {
+        "slab_planar": solve(slab.case(kappa=kappa.value), rays),
+        "slab_axisymmetric": solve(slab.case(axisymmetric=True, kappa=kappa.value), rays),
+        "cylinder_coarse": solve(cylinder.case(kappa=kappa.value, mesh_size=0.6), rays),
+        "cylinder": solve(cylinder.case(kappa=kappa.value), rays),
+    }
     return (results,)
 
 

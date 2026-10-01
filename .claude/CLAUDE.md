@@ -41,13 +41,15 @@ Examples are marimo notebooks, one directory each under `examples/`, one per
 thesis section. Each writes `data/` and compiles its `figures.typ` into
 `figures/`; neither is committed. Code they share is the `raytrax-examples`
 workspace member in `examples/src/raytrax_examples`, installed by the dev group
-and not part of `raytrax`. Meshes are generated on first use into
-`examples/meshes/`. `examples/README.md` is the map.
+and not part of `raytrax`. Each problem is one module in
+`raytrax_examples/cases/`, holding its gmsh `mesh_file` and its `case`, and
+sharing nothing with the others but the `Case` it returns. Meshes are generated
+on first use into `examples/meshes/`; delete one to rebuild it.
+`examples/README.md` is the map.
 
 ```
 uv run python examples/reentry/reentry.py       # one example, headless: data/ and figures/
 uv run marimo edit examples/reentry/reentry.py  # the same, interactively
-uv run python -m raytrax_examples.meshes        # regenerate every mesh
 uv run python -m raytrax_examples.benchmark --case slab_planar --lanes 65536
 uv run --group profiling python scripts/run_profile.py --case reentry   # stages and kernels of a whole run
 ```

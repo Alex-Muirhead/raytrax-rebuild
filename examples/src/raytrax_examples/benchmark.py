@@ -20,6 +20,7 @@ import platform
 import statistics
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,18 @@ import jax
 
 from raytrax import transport
 from raytrax.problem import Problem
-from raytrax_examples.cases import CASES, prepare
+from raytrax_examples.cases import Case, cylinder, plane, reentry, slab
+
+# The cases a command line can name, each given the absorption coefficient.
+CASES: dict[str, Callable[[float], Case]] = {
+    "slab_planar": lambda kappa: slab.case(kappa=kappa),
+    "slab_axisymmetric": lambda kappa: slab.case(axisymmetric=True, kappa=kappa),
+    "plane": lambda kappa: plane.case(kappa=kappa),
+    "plane_axisymmetric": lambda kappa: plane.case(axisymmetric=True, kappa=kappa),
+    "cylinder_coarse": lambda kappa: cylinder.case(kappa=kappa, mesh_size=0.6),
+    "cylinder": lambda kappa: cylinder.case(kappa=kappa),
+    "reentry": lambda kappa: reentry.case(kappa=kappa),
+}
 
 
 def make_rays(case: Problem, lanes: int, seed: int) -> transport.Rays:
@@ -142,7 +154,7 @@ if __name__ == "__main__":
     env = environment()
     print(f"# {env['device_kind']} ({env['platform']}) | jax {env['jax']} | x64={env['x64']}")
 
-    case = prepare(args.case, args.kappa).problem
+    case = CASES[args.case](args.kappa).problem
     lanes = [1 << p for p in range(args.from_power, args.to_power + 1)] if args.ladder else [args.lanes]
     print(f"# {args.case}: cells={case.scene.num_cells} faces={case.scene.num_faces} steps={args.steps}")
     print(HEADER)

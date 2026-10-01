@@ -26,8 +26,7 @@ import jax
 
 from raytrax import transport
 from raytrax.problem import Problem
-from raytrax_examples.benchmark import make_rays
-from raytrax_examples.cases import CASES, prepare
+from raytrax_examples.benchmark import CASES, make_rays
 
 # `  %loop_multiply_fusion.1 = f64[...] fusion(...), kind=kLoop, calls=%fused_multiply.1, ...`
 FUSION = re.compile(r"^\s+%(\S+) = .*\bfusion\(.*\bcalls=%([^,\s]+)")
@@ -172,7 +171,7 @@ if __name__ == "__main__":
     if args.x32:
         jax.config.update("jax_enable_x64", False)
 
-    case = prepare(args.case).problem
+    case = CASES[args.case](1.0).problem
     rays = make_rays(case, args.lanes, 0)
     text = compiled_text(case, rays, args.max_steps)
     plane = capture(case, rays, args.max_steps, args.out)

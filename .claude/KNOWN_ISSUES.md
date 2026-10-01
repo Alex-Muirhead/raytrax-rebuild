@@ -35,8 +35,8 @@ block per model entity and does not merge. So the same geometry is safe as
 **When it triggers.** A `.msh` whose model was built from several entities, for
 instance by `occ.fragment`. A multi-block CFD grid is the realistic case.
 
-**Why nothing is broken today.** `cylinder`, `plane` and `slab` in
-`examples/src/raytrax_examples/meshes.py` each mesh one entity, so every element type
+**Why nothing is broken today.** The `cylinder`, `plane` and `slab` cases in
+`examples/src/raytrax_examples/cases/` each mesh one entity, so every element type
 appears in exactly one block and the loop degenerates to the correct thing.
 `slab` gets its mixed elements from recombination inside a single surface
 rather than from stitching entities together, which is also what keeps it

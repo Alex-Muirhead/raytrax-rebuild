@@ -24,9 +24,14 @@ itself from `data/`, so nothing else is exported. Run one headless with
 uv run python examples/<name>/<name>.py
 ```
 
-or open it with `uv run marimo edit examples/<name>/<name>.py`. Meshes are
-generated with gmsh the first time a case asks for one, and cached under
-`examples/meshes/`; `uv run python -m raytrax_examples.meshes` regenerates them.
+or open it with `uv run marimo edit examples/<name>/<name>.py`.
+
+Each problem the examples run is one module in
+`examples/src/raytrax_examples/cases/`: `slab`, `plane`, `cylinder` and
+`reentry`. A module builds its own mesh with gmsh and its own `Problem`, so a
+new case is a new file and leaves the others alone. Meshes are generated the
+first time a case asks for one, and cached under `examples/meshes/`; delete a
+`.msh` there to build it again.
 
 Code shared between examples is the `raytrax-examples` package under
 `examples/src/`, a uv workspace member that `uv sync` installs with the dev

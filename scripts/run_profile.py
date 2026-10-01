@@ -29,10 +29,9 @@ from raytrax import scene as scene_module
 from raytrax.io import vtk
 from raytrax.mesh import geometry
 from raytrax.problem import Problem
-from raytrax_examples.benchmark import environment
-from raytrax_examples.cases import CASES, prepare
+from raytrax_examples.benchmark import CASES, environment
 
-# The host-side pipeline, as `prepare` calls it. Patched rather than inlined so
+# The host-side pipeline, as each case calls it. Patched rather than inlined so
 # there is one description of the pipeline and the timings cannot drift from it.
 BUILD_STAGES = (
     (vtk, "read"),
@@ -74,7 +73,7 @@ def timed(stages: tuple[tuple[Any, str], ...]) -> Iterator[dict[str, float]]:
 def build(name: str, kappa: float) -> tuple[Problem, dict[str, float]]:
     """Read one case, timing every host-side stage it passes through."""
     with timed(BUILD_STAGES) as elapsed:
-        case = prepare(name, kappa).problem
+        case = CASES[name](kappa).problem
     return case, elapsed
 
 

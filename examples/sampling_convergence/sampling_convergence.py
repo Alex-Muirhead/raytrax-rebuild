@@ -11,13 +11,13 @@ with app.setup:
     import numpy as np
 
     from raytrax import jit_tools, transport
-    from raytrax_examples import cases, export, profiles
+    from raytrax_examples import export, profiles
+    from raytrax_examples.cases import cylinder, slab
     from raytrax_examples.typst import compile_figures
 
     HERE = Path(__file__).parent
     DATA = HERE / "data"
 
-    CASES = ("slab_planar", "slab_axisymmetric", "cylinder_coarse")
     RAY_COUNTS = (1_000, 10_000, 100_000, 1_000_000, 10_000_000)
     NUM_SEEDS = 5
 
@@ -113,10 +113,14 @@ def _(kappa, largest, running):
         # One width for every ray count, so each curve is a statement about
         # rays rather than about batches.
         lanes = jit_tools.device_width()
+        problems = {
+            "slab_planar": slab.case(kappa=kappa.value),
+            "slab_axisymmetric": slab.case(axisymmetric=True, kappa=kappa.value),
+            "cylinder_coarse": cylinder.case(kappa=kappa.value, mesh_size=0.6),
+        }
         results = {}
-        with mo.status.progress_bar(total=len(CASES) * len(counts) * NUM_SEEDS) as bar:
-            for name in CASES:
-                case = cases.prepare(name, kappa.value)
+        with mo.status.progress_bar(total=len(problems) * len(counts) * NUM_SEEDS) as bar:
+            for name, case in problems.items():
                 rows = []
                 for count in counts:
                     for seed, key in enumerate(keys):

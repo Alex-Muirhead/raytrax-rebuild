@@ -99,9 +99,11 @@
 #let standalone(figures) = {
   [#metadata(figures.keys()) <figures>]
   let name = sys.inputs.at("figure", default: none)
+  set page(width: auto, height: auto, margin: 6pt)
+  number-setup
   if name != none {
-    set page(width: auto, height: auto, margin: 6pt)
-    number-setup
     figures.at(name)()
+  } else {
+    figures.pairs().map(((k,f)) => heading(raw(k), level: 3) + f()).join()
   }
 }
