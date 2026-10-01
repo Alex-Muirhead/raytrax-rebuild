@@ -183,8 +183,8 @@ def _(
         # of face measure; over cell volume, heating comes out in 1/m.
         if symmetric:
             bound = float(np.max(np.abs(values)))
-            return export.colourbar(-bound, bound, cmap, label, unit)
-        return export.colourbar(float(values.min()), float(values.max()), cmap, label, unit)
+            return {**export.colourbar(-bound, bound, cmap), "label": label, "unit": unit}
+        return {**export.colourbar(float(values.min()), float(values.max()), cmap), "label": label, "unit": unit}
 
     def _export_case(name, case, heating):
         """The mesh and heating renders, the profiles, and the errors of one case."""
@@ -305,7 +305,7 @@ def _(written):
 
 @app.cell
 def _(written):
-    [(n,w) for (n,w) in enumerate(written) if w.parent.name == "figures"]
+    [(n, w) for (n, w) in enumerate(written) if w.parent.name == "figures"]
     return
 
 

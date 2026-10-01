@@ -12,7 +12,7 @@
   meta: json("data/" + stem + ".json"),
 )
 
-#let heating-label = labelled([Volumetric heating], "/m")
+#let heating-label = [Volumetric heating [#quan[/m]]]
 
 #let flat-axes(name) = (
   xlabel: $x$,
@@ -44,7 +44,9 @@
   } else {
     image(data.png, width: 7cm)
   }
-  grid(columns: 2, column-gutter: 1em, align: horizon, plot, colourbar(data.meta.colourbar, height: 5cm))
+  let bar = data.meta.colourbar
+  let label = if bar.unit == none { bar.label } else [#bar.label [#quan(bar.unit)]]
+  grid(columns: 2, column-gutter: 1em, align: horizon, plot, colourbar(bar, label: label, height: 5cm))
 }
 
 #let heating(name) = cell-field(name + "/heating", name)

@@ -16,28 +16,23 @@
   set-unit(fraction: "power")
 }
 
-// An axis label: a quantity, with its unit in zero's `quan` syntax, or none.
-#let labelled(name, unit) = if unit == none { name } else { [#name (#quan(unit))] }
-
 // lilaq's default line colours. Python fills mesh element types from the same
 // map, `colours.CYCLE` in raytrax_examples.
 #let cycle = lq.color.map.petroff10
 #let palette = (blue: cycle.at(0), orange: cycle.at(1), grey: cycle.at(8))
 
-// The colour map of a sidecar `colourbar` entry, as lilaq takes it.
-#let cmap(bar) = bar.stops.map(rgb)
-
-// A colour bar for a bare image, from its sidecar `colourbar` entry.
+// A colour bar for a bare image, from its sidecar `colourbar` entry, which
+// names the lilaq colour map the image was drawn with.
 #let colourbar(bar, ..args) = {
   let mesh = lq.colormesh(
     (0, 1),
     (0, 1),
     ((bar.min, bar.max),),
-    map: cmap(bar),
+    map: dictionary(lq.color.map).at(bar.colourmap),
     min: bar.min,
     max: bar.max,
   )
-  lq.colorbar(mesh, label: labelled(bar.label, bar.at("unit", default: none)), ..args)
+  lq.colorbar(mesh, ..args)
 }
 
 // A bare image stretched over the data bounds its sidecar gives. lilaq's default

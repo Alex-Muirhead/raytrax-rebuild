@@ -385,7 +385,7 @@ def draw_mesh(
         code[mesh.topology.cell_block == index] = names.index(element.name)
 
     # One flat colour per element type and a legend, not a ramp.
-    palette = colours.cycle()[: len(names)]
+    palette = colours.CYCLE[: len(names)]
     draw(plotter, mesh, code, ragged, cmap=palette, label="", bar=False, tight_bounds=tight_bounds)
     entries = [{"label": name, "colour": colour} for name, colour in zip(names, palette, strict=True)]
     if legend:

@@ -10,7 +10,6 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
@@ -20,9 +19,6 @@ from raytrax.elements import ElementType
 from raytrax.io import vtk
 
 type Bounds = tuple[float, float, float, float]
-
-# Enough samples that a Typst gradient through them is indistinguishable from the colour map.
-COLOURMAP_STOPS = 32
 
 
 def save_csv(path: Path, columns: Sequence[np.ndarray], header: str) -> Path:
@@ -84,7 +80,7 @@ def viewbox(bounds: Bounds) -> dict[str, float]:
     return {"xmin": float(xmin), "ymin": float(ymin), "xmax": float(xmax), "ymax": float(ymax)}
 
 
-def colourbar(low: float, high: float, cmap: str, label: str, unit: str | None = None) -> dict[str, Any]:
+def colourbar(low: float, high: float, cmap: str) -> dict[str, Any]:
     """Give the sidecar entry the Typst `colourbar` reads.
 
     Parameters
@@ -94,26 +90,14 @@ def colourbar(low: float, high: float, cmap: str, label: str, unit: str | None =
     high
         The value at the top of the colour map.
     cmap
-        The name of the matplotlib colour map the image was drawn with.
-    label
-        The name of the quantity on the colour bar.
-    unit
-        The unit of the quantity in zero's `quan` syntax, such as `"GW/m^3"`, or None if it has none.
+        The matplotlib name of the colour map the image was drawn with, one of the `lilaq.<name>` maps.
 
     Returns
     -------
     colourbar
-        The range, label, unit and colour map, with the colour map sampled as hex stops.
+        The range, and the lilaq name of the colour map.
     """
-    colours = mpl.colormaps[cmap](np.linspace(0.0, 1.0, COLOURMAP_STOPS))
-    return {
-        "min": float(low),
-        "max": float(high),
-        "colourmap": cmap,
-        "stops": [mpl.colors.to_hex(colour) for colour in colours],
-        "label": label,
-        "unit": unit,
-    }
+    return {"min": float(low), "max": float(high), "colourmap": cmap.removeprefix("lilaq.")}
 
 
 def bare_axes(bounds: Bounds, pixels: int = 1600) -> tuple[Figure, Axes]:

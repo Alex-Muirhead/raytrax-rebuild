@@ -22,7 +22,9 @@ shows the same compiled figures.
 which type-checks but fails at runtime unless the repository root is on the
 path; or styling each figure in matplotlib and pyvista.
 **Cost:** Field images leave the notebook as bare PNGs with a JSON sidecar of
-bounds and colormap stops, and Typst has to line them up with its own axes.
+bounds and the colour map's name, and Typst has to line them up with its own
+axes. Python holds a copy of the lilaq colour maps in `colours.py`, which has to
+follow a lilaq upgrade by hand.
 
 ## `extend` is a compiled method of `Tally`
 

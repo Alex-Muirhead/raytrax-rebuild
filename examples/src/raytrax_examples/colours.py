@@ -4,99 +4,178 @@ Each map is registered with matplotlib as `lilaq.<name>`, so matplotlib and
 pyvista take it by name, such as `cmap="lilaq.vik"`.
 """
 
-import functools
-import json
-
 import matplotlib as mpl
-import typst
-from matplotlib.colors import Colormap, LinearSegmentedColormap, ListedColormap
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 
-from raytrax_examples.typst import ROOT
+# The colours of `lq.color.map` in lilaq 0.6.0, as style.typ imports it. lilaq
+# blends between the stops of a continuous map in Oklab and matplotlib in sRGB,
+# so between stops the two differ slightly.
+# fmt: off
+QUALITATIVE = {
+    "petroff6": [
+        "#5790fc", "#f89c20", "#e42536", "#964a8b", "#9c9ca1", "#7a21dd",
+    ],
+    "petroff8": [
+        "#1845fb", "#ff5e02", "#c91f16", "#c849a9", "#adad7d", "#86c8dd", "#578dff", "#656364",
+    ],
+    "petroff10": [
+        "#3f90da", "#ffa90e", "#bd1f01", "#94a4a2", "#832db6", "#a96b59", "#e76300", "#b9ac70",
+        "#717581", "#92dadd",
+    ],
+    "okabe-ito": [
+        "#0072b2", "#e69f00", "#009e73", "#cc79a7", "#56b4e9", "#d55e00", "#e6db3f",
+    ],
+}
 
-# The distinct colours of a qualitative map, rather than a scale.
-QUALITATIVE = frozenset({"petroff6", "petroff8", "petroff10", "okabe-ito"})
-
-# Samples of each continuous map, enough that matplotlib's interpolation between
-# them cannot be told from lilaq's.
-SAMPLES = 256
+CONTINUOUS = {
+    "cividis": [
+        "#002051", "#002153", "#002255", "#002356", "#002358", "#002459", "#00255a", "#00255c",
+        "#00265d", "#00275e", "#00275f", "#002860", "#002961", "#002962", "#002a63", "#002b64",
+        "#012b65", "#022c65", "#032d66", "#042d67", "#052e67", "#052f68", "#063069", "#073069",
+        "#08316a", "#09326a", "#0b326a", "#0c336b", "#0d346b", "#0e346b", "#0f356c", "#10366c",
+        "#12376c", "#13376d", "#14386d", "#15396d", "#17396d", "#183a6d", "#193b6d", "#1a3b6d",
+        "#1c3c6e", "#1d3d6e", "#1e3e6e", "#203e6e", "#213f6e", "#23406e", "#24406e", "#25416e",
+        "#27426e", "#28436e", "#29436e", "#2b446e", "#2c456e", "#2e456e", "#2f466e", "#30476e",
+        "#32486e", "#33486e", "#34496e", "#364a6e", "#374a6e", "#394b6e", "#3a4c6e", "#3b4d6e",
+        "#3d4d6e", "#3e4e6e", "#3f4f6e", "#414f6e", "#42506e", "#43516d", "#44526d", "#46526d",
+        "#47536d", "#48546d", "#4a546d", "#4b556d", "#4c566d", "#4d576d", "#4e576e", "#50586e",
+        "#51596e", "#52596e", "#535a6e", "#545b6e", "#565c6e", "#575c6e", "#585d6e", "#595e6e",
+        "#5a5e6e", "#5b5f6e", "#5c606e", "#5d616e", "#5e616e", "#60626e", "#61636f", "#62646f",
+        "#63646f", "#64656f", "#65666f", "#66666f", "#67676f", "#686870", "#696970", "#6a6970",
+        "#6b6a70", "#6c6b70", "#6d6c70", "#6d6c71", "#6e6d71", "#6f6e71", "#706f71", "#716f71",
+        "#727071", "#737172", "#747172", "#757272", "#767372", "#767472", "#777473", "#787573",
+        "#797673", "#7a7773", "#7b7774", "#7b7874", "#7c7974", "#7d7a74", "#7e7a74", "#7f7b75",
+        "#807c75", "#807d75", "#817d75", "#827e75", "#837f76", "#848076", "#858076", "#858176",
+        "#868276", "#878376", "#888477", "#898477", "#898577", "#8a8677", "#8b8777", "#8c8777",
+        "#8d8877", "#8e8978", "#8e8a78", "#8f8a78", "#908b78", "#918c78", "#928d78", "#938e78",
+        "#938e78", "#948f78", "#959078", "#969178", "#979278", "#989278", "#999378", "#9a9478",
+        "#9b9578", "#9b9678", "#9c9678", "#9d9778", "#9e9878", "#9f9978", "#a09a78", "#a19a78",
+        "#a29b78", "#a39c78", "#a49d78", "#a59e77", "#a69e77", "#a79f77", "#a8a077", "#a9a177",
+        "#aaa276", "#aba376", "#aca376", "#ada476", "#aea575", "#afa675", "#b0a775", "#b2a874",
+        "#b3a874", "#b4a974", "#b5aa73", "#b6ab73", "#b7ac72", "#b8ad72", "#baae72", "#bbae71",
+        "#bcaf71", "#bdb070", "#beb170", "#bfb26f", "#c1b36f", "#c2b46e", "#c3b56d", "#c4b56d",
+        "#c5b66c", "#c7b76c", "#c8b86b", "#c9b96a", "#caba6a", "#ccbb69", "#cdbc68", "#cebc68",
+        "#cfbd67", "#d1be66", "#d2bf66", "#d3c065", "#d4c164", "#d6c263", "#d7c363", "#d8c462",
+        "#d9c561", "#dbc660", "#dcc660", "#ddc75f", "#dec85e", "#e0c95d", "#e1ca5c", "#e2cb5c",
+        "#e3cc5b", "#e4cd5a", "#e6ce59", "#e7cf58", "#e8d058", "#e9d157", "#ead256", "#ebd355",
+        "#ecd454", "#edd453", "#eed553", "#f0d652", "#f1d751", "#f1d850", "#f2d950", "#f3da4f",
+        "#f4db4e", "#f5dc4d", "#f6dd4d", "#f7de4c", "#f8df4b", "#f8e04b", "#f9e14a", "#fae249",
+        "#fae349", "#fbe448", "#fbe548", "#fce647", "#fce746", "#fde846", "#fde946", "#fdea45",
+    ],
+    "viridis": [
+        "#440154", "#482777", "#3f4a8a", "#31678e", "#26838f", "#1f9d8a", "#6cce5a", "#b6de2b",
+        "#fee825",
+    ],
+    "magma": [
+        "#000004", "#140e37", "#3b0f70", "#641a80", "#8c2981", "#b63679", "#de4968", "#f66f5c",
+        "#fe9f6d", "#fece91", "#fcfdbf",
+    ],
+    "plasma": [
+        "#0d0887", "#42039d", "#6a00a8", "#900da3", "#b12a90", "#cb4678", "#e16462", "#f1834b",
+        "#fca636", "#fccd25", "#f0f921",
+    ],
+    "inferno": [
+        "#000004", "#170b3a", "#420a68", "#6b176e", "#932667", "#bb3654", "#dd513a", "#f3771a",
+        "#fca50a", "#f6d644", "#fcffa4",
+    ],
+    "batlow": [
+        "#011959", "#103f60", "#1c5a62", "#3c6d56", "#687b3e", "#9c882b", "#d19243", "#f7a07b",
+        "#fcb6bb", "#f9cbf9",
+    ],
+    "acton": [
+        "#260d40", "#3e2e5e", "#544d7b", "#71618b", "#92658e", "#bc6991", "#d485a9", "#deaac8",
+        "#e8cde3", "#efe9f9",
+    ],
+    "lajolla": [
+        "#191900", "#33220f", "#5b3023", "#8e403d", "#c6504b", "#df724f", "#e69352", "#edb455",
+        "#f7de7c", "#fefdca",
+    ],
+    "lipari": [
+        "#031326", "#13385a", "#47587a", "#6b5f76", "#8d616c", "#bb6461", "#e47b62", "#e6a179",
+        "#e8c89e", "#fcf4d9",
+    ],
+    "davos": [
+        "#00054a", "#112c71", "#295290", "#43709c", "#5e8497", "#79958c", "#98ac87", "#c8d19d",
+        "#f2f2d1", "#fdfdfd",
+    ],
+    "cork": [
+        "#2c194c", "#2a2b5e", "#293a6d", "#284b7e", "#305e8d", "#416e9a", "#567fa5", "#6a8db0",
+        "#82a0bd", "#9db4cb", "#b7c8d9", "#d4dee7", "#e5eceb", "#d9e6da", "#c0d5c0", "#a8c4a7",
+        "#8db28c", "#74a173", "#5d925d", "#478346", "#317430", "#20631e", "#174e12", "#123c0b",
+        "#0f2903",
+    ],
+    "vik": [
+        "#001261", "#02236c", "#023376", "#034480", "#06568b", "#156797", "#307da5", "#4e91b3",
+        "#71a7c3", "#93bdd1", "#b2d0de", "#d4e2e8", "#ebe4df", "#ecd4c7", "#e3bea9", "#dbab8f",
+        "#d29674", "#ca825a", "#c27243", "#b95e2a", "#a84512", "#932f06", "#7e1d06", "#6c0e07",
+        "#590008",
+    ],
+    "tofino": [
+        "#ded9ff", "#bfc3f1", "#a5b0e5", "#879cd8", "#6b86c9", "#5373b5", "#3e5e99", "#324d80",
+        "#273c65", "#1d2d4a", "#162034", "#101620", "#0d1613", "#101e12", "#152c18", "#1c3b1f",
+        "#244d28", "#2d6132", "#37733c", "#468849", "#5f9f59", "#7cb269", "#9cc47b", "#b9d389",
+        "#dae59a",
+    ],
+    "managua": [
+        "#ffcf67", "#f0b860", "#e4a559", "#d79253", "#ca804d", "#bd7148", "#b06243", "#a2543f",
+        "#91463b", "#803939", "#712f3a", "#62293f", "#572949", "#502e58", "#4c396b", "#4c457f",
+        "#4e5592", "#5266a4", "#5775b2", "#5d85c0", "#6497cd", "#6ba9d9", "#72bde5", "#79d0f1",
+        "#80e6fe",
+    ],
+    "roma": [
+        "#7e1700", "#893208", "#924610", "#9c5818", "#a56a20", "#ac7a27", "#b58b32", "#be9e40",
+        "#c7b355", "#cfc972", "#d1d98f", "#cce5ac", "#bfe9c2", "#ace7cf", "#92ded5", "#79d1d6",
+        "#5dc0d2", "#47adcc", "#399cc6", "#2f8bbe", "#287ab7", "#226ab0", "#1c58a8", "#1446a0",
+    ],
+    "oleron": [
+        "#1a2659", "#212e61", "#293568", "#323f72", "#3a477a", "#424f81", "#4a5789", "#535f91",
+        "#5d699b", "#6572a4", "#6e7bad", "#7783b6", "#808cbf", "#8a96c9", "#93a0d2", "#9ca9db",
+        "#a5b2e4", "#aebbeb", "#b8c5f1", "#bfccf4", "#c6d3f6", "#cdd9f8", "#d3e0fa", "#dbe8fc",
+        "#e2effd", "#1f4e00", "#2c5100", "#3a5600", "#445900", "#4f5c02", "#5a6005", "#65660c",
+        "#736d18", "#7e7423", "#897b2e", "#93813a", "#9e8845", "#ab9153", "#b6995e", "#c2a26a",
+        "#cdab75", "#d8b480", "#e4bf8f", "#ecc89c", "#f1d1a8", "#f5d9b4", "#f7e1bf", "#f9ebcd",
+        "#faf3d9", "#fcfce5",
+    ],
+    "fes": [
+        "#0d0d0d", "#181818", "#212121", "#2b2b2b", "#343434", "#3c3c3c", "#454545", "#4d4d4d",
+        "#565656", "#5e5e5e", "#656565", "#6d6d6d", "#747474", "#7c7c7c", "#838383", "#8a8a8a",
+        "#929292", "#9b9b9b", "#a6a6a6", "#b0b0b0", "#bababa", "#c4c4c4", "#d0d0d0", "#dedede",
+        "#ebebeb", "#094225", "#184822", "#2b4f20", "#3a5420", "#485822", "#555b24", "#615e26",
+        "#6f6229", "#7a652b", "#85682e", "#916b30", "#9e7035", "#ac7940", "#b5824d", "#bc8d5c",
+        "#c1986c", "#c5a37c", "#cbb08e", "#d0bb9f", "#d4c5af", "#d9cec0", "#ded6ce", "#e3dedf",
+        "#e7e5ec", "#ececfb",
+    ],
+    "bukavu": [
+        "#1a3333", "#1b373d", "#1c3c47", "#1e4255", "#1f4762", "#214e71", "#235581", "#255e91",
+        "#2969a0", "#2c73ac", "#2f7cb7", "#3484c1", "#3b8dc6", "#4798c7", "#50a0c8", "#59a9c8",
+        "#62b1c9", "#6bb9ca", "#76c2ca", "#80cbcc", "#91d4d0", "#a3ddd4", "#b5e6d9", "#cbf1de",
+        "#dcfae2", "#034224", "#08491f", "#115119", "#1c5914", "#2b6212", "#3d6915", "#4e6e1b",
+        "#617224", "#6f742b", "#7b7631", "#857836", "#907b3c", "#9d7e45", "#a9834f", "#b38c5d",
+        "#bb966c", "#c2a17c", "#c9af8e", "#ceba9f", "#d4c5af", "#d9cec0", "#ded6cf", "#e3dedf",
+        "#e8e5ec", "#ececfb",
+    ],
+    "tovu": [
+        "#271a2c", "#2e213a", "#342949", "#3b315a", "#3f396b", "#41417c", "#404b89", "#3e5690",
+        "#3d6194", "#3e6d96", "#407798", "#43819a", "#478b9d", "#4b959f", "#4ea1a1", "#53aba3",
+        "#5ab6a3", "#63c0a3", "#71caa3", "#85d3a3", "#9adba4", "#b1e2a9", "#c7eab0", "#ddf1ba",
+        "#f3f9c6", "#034224", "#08491f", "#115119", "#1c5914", "#2b6212", "#3d6915", "#4e6e1b",
+        "#617224", "#6f742b", "#7b7631", "#857836", "#907b3c", "#9d7e45", "#a9834f", "#b38c5d",
+        "#bb966c", "#c2a17c", "#c9af8e", "#ceba9f", "#d4c5af", "#d9cec0", "#ded6cf", "#e3dedf",
+        "#e8e5ec", "#ececfb",
+    ],
+}
+# fmt: on
 
 # The qualitative map that fills each element type in a mesh figure.
-CYCLE = "petroff10"
+CYCLE = QUALITATIVE["petroff10"]
 # The matplotlib names of the colour maps for a field of one sign, and for a
 # signed field centred on zero.
 SEQUENTIAL = "lilaq.magma"
 DIVERGING = "lilaq.vik"
 
-# lilaq comes in through style.typ, so Python and the figures use the same version.
-# lilaq draws an array map as a linear gradient through it, so the samples do too.
-QUERY = f"""
-#import "/style.typ": lq
-#let qualitative = ({"".join(f"{json.dumps(name)}, " for name in sorted(QUALITATIVE))})
-#metadata(dictionary(lq.color.map).pairs().map(((name, map)) => {{
-  let colours = if name in qualitative {{
-    map
-  }} else {{
-    let scale = gradient.linear(..map)
-    range({SAMPLES}).map(i => scale.sample(i / {SAMPLES - 1} * 100%))
-  }}
-  (name, colours.map(colour => colour.to-hex()))
-}}).to-dict()) <maps>
-""".encode()
-
-
-@functools.cache
-def lilaq_maps() -> dict[str, list[str]]:
-    """Give every lilaq colour map as hex colours.
-
-    Returns
-    -------
-    maps
-        The colours of each map by its lilaq name. A qualitative map gives its
-        distinct colours, a continuous map `SAMPLES` colours along it.
-    """
-    return json.loads(typst.query(QUERY, "<maps>", field="value", one=True, root=ROOT))
-
-
-def colourmap(name: str) -> Colormap:
-    """Give one lilaq colour map as a matplotlib colour map.
-
-    Parameters
-    ----------
-    name
-        The lilaq name of the map, such as `"vik"`.
-
-    Returns
-    -------
-    colourmap
-        A listed map for a qualitative map, a continuous map otherwise.
-    """
-    colours = lilaq_maps()[name]
-    if name in QUALITATIVE:
-        return ListedColormap(colours, name=f"lilaq.{name}")
-    return LinearSegmentedColormap.from_list(f"lilaq.{name}", colours, N=SAMPLES)
-
-
-def cycle(name: str = CYCLE) -> list[str]:
-    """Give the colours of a qualitative lilaq map, in order.
-
-    Parameters
-    ----------
-    name
-        The lilaq name of the map.
-
-    Returns
-    -------
-    colours
-        The hex colours.
-    """
-    return lilaq_maps()[name]
-
-
-def register() -> None:
-    """Register every lilaq colour map with matplotlib as `lilaq.<name>`, if it is not already."""
-    for name in lilaq_maps():
-        if f"lilaq.{name}" not in mpl.colormaps:
-            mpl.colormaps.register(colourmap(name))
-
-
-register()
+for _name, _colours in QUALITATIVE.items():
+    if f"lilaq.{_name}" not in mpl.colormaps:
+        mpl.colormaps.register(ListedColormap(_colours, name=f"lilaq.{_name}"))
+for _name, _colours in CONTINUOUS.items():
+    if f"lilaq.{_name}" not in mpl.colormaps:
+        mpl.colormaps.register(LinearSegmentedColormap.from_list(f"lilaq.{_name}", _colours))

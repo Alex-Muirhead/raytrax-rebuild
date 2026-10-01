@@ -31,7 +31,7 @@
 #let throughput() = ladder("lane_steps_per_s", ylabel: [Throughput (lane-steps #quan[/s])], yscale: "log")
 
 // Compile time against the lanes marched together.
-#let compile-time() = ladder("compile_s", ylabel: labelled([Compile time], "s"))
+#let compile-time() = ladder("compile_s", ylabel: [Compile time [#quan[s]]])
 
 #let figures = (throughput: throughput, compile-time: compile-time)
 
