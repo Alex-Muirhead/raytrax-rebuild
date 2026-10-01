@@ -49,12 +49,6 @@ document's `set-num`, `set-group` and `set-unit` settings. `number-setup` is the
 configuration the standalone figures use; the thesis can place it once, or set
 its own.
 
-## Tutorial -- `tutorial/`
-
-One problem read three ways -- 3D tets, a mixed 2D plane, and that same plane
-revolved -- walking through each stage of the pipeline and checking against the
-tangent-slab solution. It writes no data and has no Typst figures.
-
 ## Geometric Verification -- Tangent Slab -- `tangent_slab_verification/`
 
 The tangent slab problem has an analytical 1D solution, and each domain has

@@ -46,7 +46,7 @@ and not part of `raytrax`. Meshes are generated on first use into
 
 ```
 uv run python examples/reentry/reentry.py       # one example, headless: data/ and figures/
-uv run marimo edit examples/tutorial/tutorial.py   # the tutorial, matplotlib only
+uv run marimo edit examples/reentry/reentry.py  # the same, interactively
 uv run python -m raytrax_examples.meshes        # regenerate every mesh
 uv run python -m raytrax_examples.benchmark --case slab_planar --lanes 65536
 uv run --group profiling python scripts/run_profile.py --case reentry   # stages and kernels of a whole run
