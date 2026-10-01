@@ -21,33 +21,17 @@
 #let cycle = lq.color.map.petroff10
 #let palette = (blue: cycle.at(0), orange: cycle.at(1), grey: cycle.at(8))
 
-// A colour bar for a bare image, from its sidecar `colourbar` entry, which
-// names the lilaq colour map the image was drawn with.
-#let colourbar(bar, ..args) = {
-  let mesh = lq.colormesh(
-    (0, 1),
-    (0, 1),
-    ((bar.min, bar.max),),
-    map: dictionary(lq.color.map).at(bar.colourmap),
-    min: bar.min,
-    max: bar.max,
-  )
-  lq.colorbar(mesh, ..args)
+// A bare image placed on the bounds its sidecar gives, as a colour mesh. With a
+// sidecar `colourbar` entry, the mesh carries its range and lilaq colour map,
+// so `lq.colorbar` can draw it.
+#let field(png, meta) = {
+  let bar = meta.at("colourbar", default: none)
+  let colours = if bar == none { (:) } else {
+    (map: dictionary(lq.color.map).at(bar.colourmap), min: bar.min, max: bar.max)
+  }
+  // The top row of the image is the top of the bounds, so y runs from ymax.
+  lq.colormesh((meta.xmin, meta.xmax), (meta.ymax, meta.ymin), image(png), ..colours)
 }
-
-// A bare image stretched over the data bounds its sidecar gives. lilaq's default
-// alignment spans the rect from its origin towards larger y.
-#let field(png, meta) = lq.rect(
-  meta.xmin,
-  meta.ymin,
-  width: meta.xmax - meta.xmin,
-  height: meta.ymax - meta.ymin,
-  stroke: none,
-  inset: 0pt,
-  clip: true,
-  z-index: 1,
-  image(png, width: 100%, height: 100%, fit: "stretch"),
-)
 
 // Legend entries as filled swatches, for a sidecar `legend` list. An entry may
 // give the `alpha` its fill was drawn with, and the `count` of cells it labels.
@@ -61,37 +45,13 @@
   label: if "count" in entry { [#num(entry.count) #entry.label] } else { entry.label },
 ))
 
-// A diagram with equal x and y scales, framed on `bounds`. Give one of `width`
-// or `height`; the other follows from the aspect ratio of `bounds`.
-#let equal-diagram(bounds, width: auto, height: auto, ..args) = {
-  let aspect = (bounds.ymax - bounds.ymin) / (bounds.xmax - bounds.xmin)
-  if width == auto and height == auto { width = 8cm }
-  if width == auto { width = height / aspect } else { height = width * aspect }
-  lq.diagram(
-    width: width,
-    height: height,
-    xlim: (bounds.xmin, bounds.xmax),
-    ylim: (bounds.ymin, bounds.ymax),
-    ..args,
-  )
-}
-
-// Rows of a CSV with a header, as dictionaries of floats.
-#let records(rows) = {
-  let (header, ..body) = rows
-  body.map(row => header.zip(row.map(float)).to-dict())
-}
-
-// One column of the dictionaries `records` gives.
-#let column(rows, name) = rows.map(row => row.at(name))
-
-// A step line over bins, from their edges and one value per bin.
-#let stairs(lo, hi, values, ..args) = lq.plot(
-  lo + (hi.last(),),
-  values + (values.last(),),
-  step: start,
-  mark: none,
-  ..args,
+// The `lq.diagram` arguments that frame a bare image on the bounds its sidecar
+// gives, with equal x and y scales. Set one of `width` or `height` to `auto`
+// at the call, and lilaq sizes it from the other.
+#let extent(meta) = (
+  xlim: (meta.xmin, meta.xmax),
+  ylim: (meta.ymin, meta.ymax),
+  aspect-ratio: 1,
 )
 
 // Publish the figure names, and render the one named by `--input figure=<name>`

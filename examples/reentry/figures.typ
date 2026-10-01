@@ -4,42 +4,40 @@
 
 #let panel-height = 7cm
 
-#let load(stem) = (
-  png: read("data/" + stem + ".png", encoding: none),
-  meta: json("data/" + stem + ".json"),
-)
-
 #let axes = (xlabel: [$x$ [#quan[m]]], ylabel: [$r$ [#quan[m]]])
 
 // The mesh, whole and zoomed onto the forebody, coloured by element type.
 #let mesh() = {
-  let whole = load("mesh_whole")
-  let zoom = load("mesh_zoom")
+  let whole = (png: read("data/mesh_whole.png", encoding: none), meta: json("data/mesh_whole.json"))
+  let zoom = (png: read("data/mesh_zoom.png", encoding: none), meta: json("data/mesh_zoom.json"))
   grid(
     columns: 2,
     column-gutter: 1em,
-    equal-diagram(
-      whole.meta,
+    lq.diagram(
+      ..extent(whole.meta),
+      width: auto,
       height: panel-height,
       ..axes,
       legend: (position: left + top),
       field(whole.png, whole.meta),
       ..swatches(whole.meta.legend),
     ),
-    equal-diagram(zoom.meta, height: panel-height, ..axes, field(zoom.png, zoom.meta)),
+    lq.diagram(..extent(zoom.meta), width: auto, height: panel-height, ..axes, field(zoom.png, zoom.meta)),
   )
 }
 
 // Volumetric heating, whole and zoomed onto the forebody.
 #let heating() = {
-  let whole = load("heating_whole")
-  let zoom = load("heating_zoom")
+  let whole = (png: read("data/heating_whole.png", encoding: none), meta: json("data/heating_whole.json"))
+  let zoom = (png: read("data/heating_zoom.png", encoding: none), meta: json("data/heating_zoom.json"))
+  // Both panels share one colour range, so one bar serves both.
+  let whole-mesh = field(whole.png, whole.meta)
   grid(
     columns: 3,
     column-gutter: 1em,
-    equal-diagram(whole.meta, height: panel-height, ..axes, field(whole.png, whole.meta)),
-    equal-diagram(zoom.meta, height: panel-height, ..axes, field(zoom.png, zoom.meta)),
-    colourbar(whole.meta.colourbar, label: [Volumetric heating [#quan[GW/m^3]]], height: panel-height),
+    lq.diagram(..extent(whole.meta), width: auto, height: panel-height, ..axes, whole-mesh),
+    lq.diagram(..extent(zoom.meta), width: auto, height: panel-height, ..axes, field(zoom.png, zoom.meta)),
+    lq.colorbar(whole-mesh, label: [Volumetric heating [#quan[GW/m^3]]], height: panel-height),
   )
 }
 

@@ -90,7 +90,7 @@ def axial_profile(
 
 def radial_profile(
     case: Case, heating: np.ndarray, kappa: float, bands: int = 5
-) -> tuple[np.ndarray, list[Band]] | None:
+) -> tuple[np.ndarray, list[Band]]:
     """Give the heating against radius in a few axial bands.
 
     Parameters
@@ -106,12 +106,19 @@ def radial_profile(
 
     Returns
     -------
-    profile
-        The shell edges and one `Band` per axial band, or None if the case has no axis.
+    shells
+        The shell edges along the radius.
+    bands
+        One `Band` per axial band.
+
+    Raises
+    ------
+    ValueError
+        If the case has no axis: it is a planar 2D case.
     """
     mesh = case.mesh
     if mesh.topology.dim != 3 and not case.axisymmetric:
-        return None
+        raise ValueError("a planar 2D case has no axis to measure a radius from")
 
     centroid, vertices = mesh.geometry.cells.centroid, mesh.geometry.vertices
     # Revolved, the radius is stored outright; in 3D it has to be measured.

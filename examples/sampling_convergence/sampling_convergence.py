@@ -13,10 +13,12 @@ with app.setup:
     from raytrax import jit_tools, transport
     from raytrax_examples import export, profiles
     from raytrax_examples.cases import cylinder, slab
-    from raytrax_examples.typst import compile_figures
+    from raytrax_examples.typst import figure
 
     HERE = Path(__file__).parent
     DATA = HERE / "data"
+    FIGURES = HERE / "figures.typ"
+    DATA.mkdir(exist_ok=True)
 
     RAY_COUNTS = (1_000, 10_000, 100_000, 1_000_000, 10_000_000)
     NUM_SEEDS = 5
@@ -103,44 +105,54 @@ def run(case, rays, key, lanes):
 
 
 @app.cell
-def _(kappa, largest, running):
-    def _sweep():
-        if not running.value:
-            return None
+def _(kappa, running):
+    mo.stop(
+        not running.value,
+        mo.md("*Tick **Run the sweep** above. A full sweep is 75 traces, about six minutes on a GPU.*"),
+    )
+    slab_planar = slab.case(kappa=kappa.value)
+    slab_axisymmetric = slab.case(axisymmetric=True, kappa=kappa.value)
+    cylinder_coarse = cylinder.case(kappa=kappa.value, mesh_size=0.6)
+    return cylinder_coarse, slab_axisymmetric, slab_planar
 
-        counts = [count for count in RAY_COUNTS if count <= int(largest.value)]
-        keys = jax.random.split(jax.random.key(0), NUM_SEEDS)
-        # One width for every ray count, so each curve is a statement about
-        # rays rather than about batches.
-        lanes = jit_tools.device_width()
-        problems = {
-            "slab_planar": slab.case(kappa=kappa.value),
-            "slab_axisymmetric": slab.case(axisymmetric=True, kappa=kappa.value),
-            "cylinder_coarse": cylinder.case(kappa=kappa.value, mesh_size=0.6),
-        }
-        results = {}
-        with mo.status.progress_bar(total=len(problems) * len(counts) * NUM_SEEDS) as bar:
-            for name, case in problems.items():
-                rows = []
-                for count in counts:
-                    for seed, key in enumerate(keys):
-                        heating, spent, flight = run(case, count, key, lanes)
-                        rows.append(
-                            (
-                                count,
-                                seed,
-                                profiles.cell_error(case, heating, kappa.value),
-                                profiles.profile_error(case, heating, kappa.value),
-                                spent,
-                                flight,
-                            )
-                        )
-                        bar.update()
-                results[name] = np.array(rows)
-        return results
 
-    sweep = _sweep()
-    return (sweep,)
+@app.function
+def sweep(case, kappa, counts, keys, lanes, bar):
+    """Trace one case at every ray count and seed, and give one row per trace.
+
+    Each row is the ray count, the seed, the per-cell and binned errors, the
+    share of the launch budget spent, and the share of energy left in flight.
+    """
+    rows = []
+    for count in counts:
+        for seed, key in enumerate(keys):
+            heating, spent, flight = run(case, count, key, lanes)
+            rows.append(
+                (
+                    count,
+                    seed,
+                    profiles.cell_error(case, heating, kappa),
+                    profiles.profile_error(case, heating, kappa),
+                    spent,
+                    flight,
+                )
+            )
+            bar.update()
+    return np.array(rows)
+
+
+@app.cell
+def _(cylinder_coarse, kappa, largest, slab_axisymmetric, slab_planar):
+    counts = [count for count in RAY_COUNTS if count <= int(largest.value)]
+    keys = jax.random.split(jax.random.key(0), NUM_SEEDS)
+    # One width for every ray count, so each curve is a statement about rays
+    # rather than about batches.
+    lanes = jit_tools.device_width()
+    with mo.status.progress_bar(total=3 * len(counts) * NUM_SEEDS) as bar:
+        rows_planar = sweep(slab_planar, kappa.value, counts, keys, lanes, bar)
+        rows_axisymmetric = sweep(slab_axisymmetric, kappa.value, counts, keys, lanes, bar)
+        rows_coarse = sweep(cylinder_coarse, kappa.value, counts, keys, lanes, bar)
+    return rows_axisymmetric, rows_coarse, rows_planar
 
 
 @app.function
@@ -158,59 +170,35 @@ def aggregate(rows):
     return columns
 
 
-@app.cell(hide_code=True)
-def _(sweep):
-    def _table():
-        if sweep is None:
-            return mo.md("*Tick **Run the sweep** above. A full sweep is 75 traces, about six minutes on a GPU.*")
-
-        header = ["rays"] + [f"{name} {metric}" for name in sweep for metric in ("cell", "binned")]
-        columns = [aggregate(rows) for rows in sweep.values()]
-        lines = [f"| {' | '.join(header)} |", f"|{'---|' * len(header)}"]
-        for index, count in enumerate(columns[0][0]):
-            cells = [f"{column[metric][index]:.2e}" for column in columns for metric in (1, 4)]
-            lines.append(f"| {count:,.0f} | {' | '.join(cells)} |")
-
-        # Unspent budget means rays that never launched; energy still in flight
-        # means rays that never finished. Neither shows up in the errors as
-        # anything but a floor, so they are called out rather than plotted.
-        unspent = max(abs(rows[:, 4] - 1).max() for rows in sweep.values())
-        flight = max(rows[:, 5].max() for rows in sweep.values())
-        note = f"Worst unspent launch budget {unspent:.1e}, worst energy left in flight {flight:.1e}"
-        if unspent > 1e-9 or flight > 1e-6:
-            note += " - **too large**: raise `max_steps` in `run`"
-        return mo.md("\n".join(lines) + f"\n\n{note}.")
-
-    _table()
+@app.cell
+def _(rows_axisymmetric, rows_coarse, rows_planar):
+    # Unspent budget means rays that never launched; energy still in flight
+    # means rays that never finished. Neither shows up in the errors as
+    # anything but a floor, so they are called out rather than plotted.
+    _all = np.vstack([rows_planar, rows_axisymmetric, rows_coarse])
+    _unspent = abs(_all[:, 4] - 1).max()
+    _flight = _all[:, 5].max()
+    _note = f"Worst unspent launch budget {_unspent:.1e}, worst energy left in flight {_flight:.1e}"
+    if _unspent > 1e-9 or _flight > 1e-6:
+        _note += " - **too large**: raise `max_steps` in `run`"
+    mo.md(_note + ".")
     return
 
 
-@app.cell(hide_code=True)
-def _(sweep):
-    def _export():
-        if sweep is None:
-            return []
-        written = []
-        for name, rows in sweep.items():
-            written.append(
-                export.save_csv(
-                    DATA / name / "rmse.csv",
-                    aggregate(rows),
-                    "rays,cell_rmse,cell_lo,cell_hi,bin_rmse,bin_lo,bin_hi,cell_sqrt_law,bin_sqrt_law",
-                )
-            )
-            written.append(
-                export.save_csv(DATA / name / "seeds.csv", rows.T, "rays,seed,cell_rmse,bin_rmse,spent,in_flight")
-            )
-        return written + compile_figures(HERE / "figures.typ")
+@app.cell
+def _(rows_axisymmetric, rows_coarse, rows_planar):
+    _header = "rays,cell_rmse,cell_lo,cell_hi,bin_rmse,bin_lo,bin_hi,cell_sqrt_law,bin_sqrt_law"
+    export.save_csv(DATA / "slab_planar_rmse.csv", aggregate(rows_planar), _header)
+    export.save_csv(DATA / "slab_axisymmetric_rmse.csv", aggregate(rows_axisymmetric), _header)
+    export.save_csv(DATA / "cylinder_coarse_rmse.csv", aggregate(rows_coarse), _header)
 
-    written = _export()
-    return (written,)
+    # Every trace, for anything the figure does not show.
+    _header = "rays,seed,cell_rmse,bin_rmse,spent,in_flight"
+    export.save_csv(DATA / "slab_planar_seeds.csv", rows_planar.T, _header)
+    export.save_csv(DATA / "slab_axisymmetric_seeds.csv", rows_axisymmetric.T, _header)
+    export.save_csv(DATA / "cylinder_coarse_seeds.csv", rows_coarse.T, _header)
 
-
-@app.cell(hide_code=True)
-def _(written):
-    mo.vstack([mo.image(path) for path in written if path.parent.name == "figures"])
+    mo.image(figure(FIGURES, "rmse"))
     return
 
 

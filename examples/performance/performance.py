@@ -11,10 +11,12 @@ with app.setup:
 
     from raytrax_examples import benchmark, export
     from raytrax_examples.cases import cylinder, reentry, slab
-    from raytrax_examples.typst import compile_figures
+    from raytrax_examples.typst import figure
 
     HERE = Path(__file__).parent
     DATA = HERE / "data"
+    FIGURES = HERE / "figures.typ"
+    DATA.mkdir(exist_ok=True)
 
     COLUMNS = ("lanes", "compile_s", "median_s", "min_s", "ms_per_step", "lane_steps_per_s", "peak_mib", "alive_at_end")
 
@@ -54,69 +56,75 @@ def _():
 
 
 @app.cell
-def _(powers, repeats, running, steps):
-    def _ladder():
-        if not running.value:
-            return None
-        low, high = powers.value
-        lanes = [1 << power for power in range(low, high + 1)]
-        problems = {
-            "slab_planar": slab.case().problem,
-            "slab_axisymmetric": slab.case(axisymmetric=True).problem,
-            "cylinder": cylinder.case().problem,
-            "reentry": reentry.case().problem,
-        }
-        results = {}
-        with mo.status.progress_bar(total=len(problems) * len(lanes)) as bar:
-            for name, problem in problems.items():
-                records = []
-                for count in lanes:
-                    try:
-                        records.append(benchmark.measure(problem, count, steps.value, repeats.value, 0, 1e-8))
-                    except Exception:  # noqa: BLE001 - an out-of-memory ends this case's ladder, not the run
-                        break
-                    finally:
-                        bar.update()
-                results[name] = records
-        return results
-
-    ladder = _ladder()
-    return (ladder,)
+def _(running):
+    mo.stop(not running.value, mo.md("*Tick **Run the ladder** above.*"))
+    slab_planar = slab.case().problem
+    slab_axisymmetric = slab.case(axisymmetric=True).problem
+    cylinder_fine = cylinder.case().problem
+    capsule = reentry.case().problem
+    return capsule, cylinder_fine, slab_axisymmetric, slab_planar
 
 
-@app.cell(hide_code=True)
-def _(ladder):
-    def _table():
-        if ladder is None:
-            return mo.md("*Tick **Run the ladder** above.*")
-        lines = []
-        for name, records in ladder.items():
-            lines += [f"**{name}**", "```", benchmark.HEADER, *map(benchmark.row, records), "```", ""]
-        return mo.md("\n".join(lines))
+@app.function
+def ladder(problem, lanes, steps, repeats, bar):
+    """Time one problem at each lane count, and give one record per count that fits on the device."""
+    records = []
+    for count in lanes:
+        try:
+            records.append(benchmark.measure(problem, count, steps, repeats, 0, 1e-8))
+        except Exception:  # noqa: BLE001 - an out-of-memory ends this ladder, not the run
+            bar.update(len(lanes) - len(records))
+            break
+        bar.update()
+    return records
 
-    _table()
+
+@app.cell
+def _(capsule, cylinder_fine, powers, repeats, slab_axisymmetric, slab_planar, steps):
+    low, high = powers.value
+    lanes = [1 << power for power in range(low, high + 1)]
+    with mo.status.progress_bar(total=4 * len(lanes)) as bar:
+        records_planar = ladder(slab_planar, lanes, steps.value, repeats.value, bar)
+        records_axisymmetric = ladder(slab_axisymmetric, lanes, steps.value, repeats.value, bar)
+        records_cylinder = ladder(cylinder_fine, lanes, steps.value, repeats.value, bar)
+        records_reentry = ladder(capsule, lanes, steps.value, repeats.value, bar)
+    return records_axisymmetric, records_cylinder, records_planar, records_reentry
+
+
+@app.cell
+def _(records_axisymmetric, records_cylinder, records_planar, records_reentry):
+    mo.md(
+        "\n".join(
+            [
+                f"**{name}**\n```\n{benchmark.HEADER}\n" + "\n".join(map(benchmark.row, records)) + "\n```"
+                for name, records in (
+                    ("slab_planar", records_planar),
+                    ("slab_axisymmetric", records_axisymmetric),
+                    ("cylinder", records_cylinder),
+                    ("reentry", records_reentry),
+                )
+            ]
+        )
+    )
     return
 
 
-@app.cell(hide_code=True)
-def _(ladder):
-    def _export():
-        if ladder is None:
-            return []
-        written = [export.save_json(DATA / "environment.json", benchmark.environment())]
-        for name, records in ladder.items():
-            # A backend that reports no peak memory gives None; the CSV takes NaN.
-            columns = [np.array([np.nan if r[c] is None else r[c] for r in records], dtype=float) for c in COLUMNS]
-            written.append(export.save_csv(DATA / f"{name}.csv", columns, ",".join(COLUMNS)))
-        return written + compile_figures(HERE / "figures.typ")
-
-    written = _export()
-    return (written,)
+@app.function
+def columns(records):
+    """Give the records as one float array per column of `COLUMNS`, with NaN where a backend reports no peak memory."""
+    return [np.array([np.nan if r[c] is None else r[c] for r in records], dtype=float) for c in COLUMNS]
 
 
-@app.cell(hide_code=True)
-def _(written):
-    mo.vstack([mo.image(path) for path in written if path.parent.name == "figures"])
+@app.cell
+def _(records_axisymmetric, records_cylinder, records_planar, records_reentry):
+    export.save_json(DATA / "environment.json", benchmark.environment())
+    _header = ",".join(COLUMNS)
+    export.save_csv(DATA / "slab_planar.csv", columns(records_planar), _header)
+    export.save_csv(DATA / "slab_axisymmetric.csv", columns(records_axisymmetric), _header)
+    export.save_csv(DATA / "cylinder.csv", columns(records_cylinder), _header)
+    export.save_csv(DATA / "reentry.csv", columns(records_reentry), _header)
+
+    mo.hstack([mo.image(figure(FIGURES, "throughput")), mo.image(figure(FIGURES, "compile-time"))])
     return
 
 
