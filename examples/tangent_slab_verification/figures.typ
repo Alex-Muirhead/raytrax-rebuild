@@ -109,11 +109,11 @@
     height: 5cm,
     xlabel: $x$,
     ylabel: heating-label,
-    lq.plot(step-x, monte-carlo, step: start, mark: none, stroke: 1.2pt + palette.blue, label: [Monte-Carlo]),
+    lq.plot(step-x, monte-carlo, step: end, mark: none, stroke: 1.2pt + palette.blue, label: [Monte-Carlo]),
     lq.plot(
       step-x,
       tangent-slab,
-      step: start,
+      step: end,
       mark: none,
       stroke: (paint: palette.orange, thickness: 1.2pt, dash: "dashed"),
       label: [Tangent slab],
@@ -148,7 +148,7 @@
         lq.plot(
           step-x,
           heating + (heating.last(),),
-          step: start,
+          step: end,
           mark: none,
           stroke: 1pt + colour,
           label: [#num(band.lo, round: band-round) $< x <$ #num(band.hi, round: band-round)],

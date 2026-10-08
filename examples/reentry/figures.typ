@@ -73,7 +73,7 @@
     lq.plot(
       step-x,
       step-y,
-      step: start,
+      step: end,
       mark: none,
       stroke: 1.2pt + palette.blue,
       label: [pooled over the bin],
