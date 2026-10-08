@@ -142,3 +142,9 @@ Throughput and compile time of the march against the number of lanes, on the
 script path shortens the ladder. For one case at one lane count, use
 `uv run python -m raytrax_examples.benchmark`; the profilers in `scripts/`
 break a run down further.
+
+The same notebook times a whole trace of the 2D planar slab on the GPU and on
+the host CPU, from 1e2 to 1e7 rays, and reports the ray count above which the
+GPU stays faster. Small runs are latency bound, and the GPU pays a fixed cost
+for every chunk of steps; large runs are throughput bound. `-- --largest
+100000` caps the ray count.

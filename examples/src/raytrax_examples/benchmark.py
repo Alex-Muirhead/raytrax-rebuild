@@ -16,6 +16,7 @@ example runs the same `measure` over every case and writes it for the thesis.
 
 import argparse
 import json
+import os
 import platform
 import statistics
 import subprocess
@@ -40,6 +41,9 @@ CASES: dict[str, Callable[[float], Case]] = {
     "cylinder": lambda kappa: cylinder.case(kappa=kappa),
     "reentry": lambda kappa: reentry.case(kappa=kappa),
 }
+
+# A step limit that no trace here reaches; the trace stops when its rays do.
+MAX_TRACE_STEPS = 1 << 30
 
 
 def make_rays(case: Problem, lanes: int, seed: int) -> transport.Rays:
@@ -94,24 +98,76 @@ def measure(case: Problem, lanes: int, steps: int, repeats: int, seed: int, exti
     }
 
 
-def environment() -> dict[str, Any]:
-    """Enough about this machine to compare a run against another one."""
-    device = jax.local_devices()[0]
+def measure_trace(case: Problem, num_rays: int, lanes: int, repeats: int, seed: int) -> dict[str, Any]:
+    """Compile from cold, then time `repeats` whole traces, blocking on the whole tally.
+
+    The run goes to the default device, so call it inside `jax.default_device`
+    with `case` already put on that device.
+
+    Raises
+    ------
+    RuntimeError
+        If the step limit stops the trace before it launches every ray.
+    """
+
+    def trace(offset):
+        # The default step limit stops a narrow batch of many rays early.
+        return transport.launch_and_march(
+            jax.random.key(seed + offset), case, num_rays, lanes=lanes, max_steps=MAX_TRACE_STEPS
+        )
+
+    # Without this a lane count seen before reuses its compile, and the first call times only the run.
+    jax.clear_caches()
+    start = time.perf_counter()
+    tally = jax.block_until_ready(trace(0))
+    first = time.perf_counter() - start
+
+    runs = []
+    for offset in range(1, repeats + 1):
+        start = time.perf_counter()
+        jax.block_until_ready(trace(offset))
+        runs.append(time.perf_counter() - start)
+
+    if int(tally.launched) != num_rays or bool(tally.rays.alive.any()):
+        raise RuntimeError(f"the step limit stopped the trace after {int(tally.launched)} of {num_rays} rays")
+
+    median = statistics.median(runs)
+    deposit = tally.estimate(case)
+    budget = deposit.cells.sum() + deposit.faces.sum() + deposit.escaped + tally.in_flight(case)
+    return {
+        "rays": num_rays,
+        "lanes": lanes,
+        # The first call is compile plus one run; the difference is the compile.
+        "compile_s": first - median,
+        "median_s": median,
+        "min_s": min(runs),
+        "max_s": max(runs),
+        "rays_per_s": num_rays / median,
+        "energy_error": float(budget / case.sources.total - 1),
+    }
+
+
+def environment(device: jax.Device | None = None) -> dict[str, Any]:
+    """Enough about this machine to compare a run against another one, for `device` or the first device."""
+    device = device or jax.local_devices()[0]
+    driver = ""
     try:
-        driver = subprocess.run(
-            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        ).stdout.strip()
+        if device.platform == "gpu":
+            driver = subprocess.run(
+                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            ).stdout.strip()
     except OSError, subprocess.SubprocessError:
-        driver = ""
+        pass
     return {
         "device_kind": device.device_kind,
         "platform": device.platform,
         "driver": driver,
         "host": platform.node(),
+        "cpu_count": os.cpu_count(),
         "python": platform.python_version(),
         "jax": jax.__version__,
         "x64": bool(jax.config.jax_enable_x64),
