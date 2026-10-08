@@ -27,8 +27,8 @@ uv run python examples/<name>/<name>.py
 or open it with `uv run marimo edit examples/<name>/<name>.py`.
 
 Each problem the examples run is one module in
-`examples/src/raytrax_examples/cases/`: `slab`, `plane`, `cylinder` and
-`reentry`. A module builds its own mesh with gmsh and its own `Problem`, so a
+`examples/src/raytrax_examples/cases/`: `slab`, `plane`, `cylinder`, `square`
+and `reentry`. A module builds its own mesh with gmsh and its own `Problem`, so a
 new case is a new file and leaves the others alone. Meshes are generated the
 first time a case asks for one, and cached under `examples/meshes/`; delete a
 `.msh` there to build it again.
@@ -69,6 +69,20 @@ mesh resolution.
 
 <!-- Not yet done: the 3D cylinder runs at two resolutions, but the 2D slab runs at -->
 <!-- one. -->
+
+## Boundary Verification -- Isothermal Slab -- `isothermal_verification/`
+
+A hot, grey, non-scattering gas at 2000 K, with an absorptivity of 1, fills a
+15 x 15 square between two cold black walls. The top and bottom are either
+specular, which makes the square an infinite slab, or absorbing. Each runs as
+2D planar and 2D axisymmetric, on structured grids of 15 x 15, 30 x 30 and
+45 x 45 quads.
+
+The incident radiation over the strip 5 < y < 10 is compared against the 1D
+isothermal-slab solution for both boundary kinds. The strip is 5 optical
+depths from the top and bottom, so the absorbing case shows what the slab
+should give there, and the specular case shows whether the mirrors return the
+right energy.
 
 ## Geometric Verification -- Concentric Spheres / Cylinders -- `concentric_verification/`
 
