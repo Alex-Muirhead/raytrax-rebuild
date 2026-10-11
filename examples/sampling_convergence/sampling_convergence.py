@@ -4,6 +4,7 @@ __generated_with = "0.24.0"
 app = marimo.App(width="medium")
 
 with app.setup:
+    import time
     from pathlib import Path
 
     import jax
@@ -20,7 +21,7 @@ with app.setup:
     FIGURES = HERE / "figures.typ"
     DATA.mkdir(exist_ok=True)
 
-    RAY_COUNTS = (1_000, 10_000, 100_000, 1_000_000, 10_000_000)
+    RAY_COUNTS = (1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000)
     NUM_SEEDS = 5
 
 
@@ -72,10 +73,10 @@ def _():
 
 @app.cell
 def _():
-    largest_default = mo.cli_args().get("largest") or f"{RAY_COUNTS[-1]}"
-    kappa = mo.ui.slider(0.1, 5.0, 0.1, value=1.0, label="Absorptivity kappa")
+    largest_default = mo.cli_args().get("largest") or RAY_COUNTS[-1]
+    kappa = mo.ui.slider(0.1, 5.0, 0.1, value=1.0, label="Absorptivity kappa", show_value=True)
     largest = mo.ui.dropdown(
-        [f"{count}" for count in RAY_COUNTS], value=str(largest_default), label="Largest ray count"
+        [f"{count:,}" for count in RAY_COUNTS], value=f"{int(largest_default):,}", label="Largest ray count"
     )
     running = mo.ui.checkbox(mo.app_meta().mode == "script", label="Run the sweep")
     mo.hstack([kappa, largest, running], justify="start", gap=2)
@@ -108,7 +109,10 @@ def run(case, rays, key, lanes):
 def _(kappa, running):
     mo.stop(
         not running.value,
-        mo.md("*Tick **Run the sweep** above. A full sweep is 75 traces, about six minutes on a GPU.*"),
+        mo.md(
+            f"*Tick **Run the sweep** above. A full sweep is {3 * len(RAY_COUNTS) * NUM_SEEDS} traces, and the "
+            "progress bar gives the time left.*"
+        ),
     )
     slab_planar = slab.case(kappa=kappa.value)
     slab_axisymmetric = slab.case(axisymmetric=True, kappa=kappa.value)
@@ -116,8 +120,55 @@ def _(kappa, running):
     return cylinder_coarse, slab_axisymmetric, slab_planar
 
 
+@app.class_definition
+class Progress:
+    """The sweep's progress bar, and the time the rest of the sweep needs.
+
+    Attributes
+    ----------
+    bar
+        The bar to write to. It counts traces, one trace at a time.
+    rays
+        The rays the whole sweep traces.
+    traced
+        The rays it has traced so far.
+    start
+        The time it started, from a monotonic clock.
+    """
+
+    def __init__(self, bar, rays):
+        self.bar = bar
+        self.rays = rays
+        self.traced = 0
+        self.start = time.monotonic()
+
+    def starting(self, name, count, seed):
+        """Say which trace is about to run, and how long the sweep still needs."""
+        self.bar.update(
+            increment=0, title=name, subtitle=f"{count:,} rays, seed {seed + 1} of {NUM_SEEDS}{self.left()}"
+        )
+
+    def finished(self, count):
+        """Count a finished trace of `count` rays."""
+        self.traced += count
+        self.bar.update()
+
+    def left(self):
+        """The time the rest of the sweep needs, as text, or nothing before the first trace."""
+        if self.traced == 0:
+            return ""
+        # A trace costs about what it launches, so the rays left over the rays
+        # traced is what the clock so far scales by. A bar counting traces
+        # instead has the cheapest trace speak for the dearest, which over six
+        # decades of ray count is out by a factor of thousands.
+        seconds = (time.monotonic() - self.start) * (self.rays - self.traced) / self.traced
+        hours, rest = divmod(int(seconds), 3600)
+        minutes, rest = divmod(rest, 60)
+        return f", {hours}h{minutes:02d}m left" if hours else f", {minutes}m{rest:02d}s left"
+
+
 @app.function
-def sweep(case, kappa, counts, keys, lanes, bar):
+def sweep(case, name, kappa, counts, keys, lanes, progress):
     """Trace one case at every ray count and seed, and give one row per trace.
 
     Each row is the ray count, the seed, the per-cell and binned errors, the
@@ -126,6 +177,7 @@ def sweep(case, kappa, counts, keys, lanes, bar):
     rows = []
     for count in counts:
         for seed, key in enumerate(keys):
+            progress.starting(name, count, seed)
             heating, spent, flight = run(case, count, key, lanes)
             rows.append(
                 (
@@ -137,21 +189,24 @@ def sweep(case, kappa, counts, keys, lanes, bar):
                     flight,
                 )
             )
-            bar.update()
+            progress.finished(count)
     return np.array(rows)
 
 
 @app.cell
 def _(cylinder_coarse, kappa, largest, slab_axisymmetric, slab_planar):
-    counts = [count for count in RAY_COUNTS if count <= int(largest.value)]
+    counts = [count for count in RAY_COUNTS if count <= int(largest.value.replace(",", ""))]
     keys = jax.random.split(jax.random.key(0), NUM_SEEDS)
     # One width for every ray count, so each curve is a statement about rays
     # rather than about batches.
     lanes = jit_tools.device_width()
-    with mo.status.progress_bar(total=3 * len(counts) * NUM_SEEDS) as bar:
-        rows_planar = sweep(slab_planar, kappa.value, counts, keys, lanes, bar)
-        rows_axisymmetric = sweep(slab_axisymmetric, kappa.value, counts, keys, lanes, bar)
-        rows_coarse = sweep(cylinder_coarse, kappa.value, counts, keys, lanes, bar)
+    # `Progress` gives the time left, so the bar's own estimate is turned off.
+    _traces = 3 * len(counts) * NUM_SEEDS
+    with mo.status.progress_bar(total=_traces, show_rate=False, show_eta=False) as bar:
+        progress = Progress(bar, rays=3 * NUM_SEEDS * sum(counts))
+        rows_planar = sweep(slab_planar, "slab_planar", kappa.value, counts, keys, lanes, progress)
+        rows_axisymmetric = sweep(slab_axisymmetric, "slab_axisymmetric", kappa.value, counts, keys, lanes, progress)
+        rows_coarse = sweep(cylinder_coarse, "cylinder_coarse", kappa.value, counts, keys, lanes, progress)
     return rows_axisymmetric, rows_coarse, rows_planar
 
 
