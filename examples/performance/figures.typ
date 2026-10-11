@@ -8,25 +8,29 @@
   let axisymmetric = lq.load-txt(read("data/slab_axisymmetric.csv"), header: true)
   let cylinder = lq.load-txt(read("data/cylinder.csv"), header: true)
   let capsule = lq.load-txt(read("data/reentry.csv"), header: true)
+  let y-scale = y => y / 1e9
   lq.diagram(
     width: 9cm,
     height: 6cm,
     // Lane counts are powers of two.
     xscale: lq.scale.log(base: 2),
-    yscale: "log",
     xlabel: [Lanes],
-    ylabel: [Throughput (lane-steps #quan[/s])],
+    ylabel: [Throughput steps [#quan[GHz]]],
     legend: (position: left + top, dx: 100% + 0.5em),
-    lq.plot(planar.lanes, planar.lane_steps_per_s, stroke: 1.2pt + cycle.at(0), color: cycle.at(0), label: [`slab_planar`]),
+    lq.xaxis(
+      position: top,
+      scale: "log",
+    ),
+    lq.plot(planar.lanes, planar.lane_steps_per_s.map(y-scale), stroke: 1.2pt + cycle.at(0), color: cycle.at(0), label: [`slab (planar)`]),
     lq.plot(
       axisymmetric.lanes,
-      axisymmetric.lane_steps_per_s,
+      axisymmetric.lane_steps_per_s.map(y-scale),
       stroke: 1.2pt + cycle.at(1),
       color: cycle.at(1),
-      label: [`slab_axisymmetric`],
+      label: [`slab (axisymmetric)`],
     ),
-    lq.plot(cylinder.lanes, cylinder.lane_steps_per_s, stroke: 1.2pt + cycle.at(2), color: cycle.at(2), label: [`cylinder`]),
-    lq.plot(capsule.lanes, capsule.lane_steps_per_s, stroke: 1.2pt + cycle.at(3), color: cycle.at(3), label: [`reentry`]),
+    lq.plot(cylinder.lanes, cylinder.lane_steps_per_s.map(y-scale), stroke: 1.2pt + cycle.at(2), color: cycle.at(2), label: [`cylinder`]),
+    lq.plot(capsule.lanes, capsule.lane_steps_per_s.map(y-scale), stroke: 1.2pt + cycle.at(3), color: cycle.at(3), label: [`reentry`]),
   )
 }
 

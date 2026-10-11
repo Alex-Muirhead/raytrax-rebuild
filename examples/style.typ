@@ -13,7 +13,7 @@
 #let number-setup = {
   set-num(product: sym.times)
   set-group(threshold: 5)
-  set-unit(fraction: "power")
+  set-unit(fraction: "inline")
 }
 
 // lilaq's default line colours. Python fills mesh element types from the same
