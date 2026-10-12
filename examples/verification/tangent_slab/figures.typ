@@ -96,14 +96,15 @@
   )
 }
 
-// Heating against depth from an `axial.csv`, with the tangent-slab mean over each bin.
-#let axial-heating(path) = {
-  let bins = lq.load-txt(read(path), header: true)
+// Heating against depth from an `axial.csv` of bin means, with the tangent-slab
+// solution sampled finely in a `tangent_slab.csv`.
+#let axial-heating(bins-path, exact-path) = {
+  let bins = lq.load-txt(read(bins-path), header: true)
+  let exact = lq.load-txt(read(exact-path), header: true)
   // A step line holds each bin's value from its low edge to the next, so the
   // last value repeats at the high edge of the last bin.
   let step-x = bins.lo + (bins.hi.last(),)
   let monte-carlo = bins.heating + (bins.heating.last(),)
-  let tangent-slab = bins.tangent_slab + (bins.tangent_slab.last(),)
   lq.diagram(
     width: 8cm,
     height: 5cm,
@@ -111,9 +112,8 @@
     ylabel: heating-label,
     lq.plot(step-x, monte-carlo, step: end, mark: none, stroke: 1.2pt + palette.blue, label: [Monte-Carlo]),
     lq.plot(
-      step-x,
-      tangent-slab,
-      step: end,
+      exact.x,
+      exact.tangent_slab,
       mark: none,
       stroke: (paint: palette.orange, thickness: 1.2pt, dash: "dashed"),
       label: [Tangent slab],
@@ -121,9 +121,12 @@
   )
 }
 
-#let axial-slab-planar() = axial-heating("data/slab_planar_axial.csv")
-#let axial-slab-axisymmetric() = axial-heating("data/slab_axisymmetric_axial.csv")
-#let axial-cylinder() = axial-heating("data/cylinder_axial.csv")
+#let axial-slab-planar() = axial-heating("data/slab_planar_axial.csv", "data/slab_planar_tangent_slab.csv")
+#let axial-slab-axisymmetric() = axial-heating(
+  "data/slab_axisymmetric_axial.csv",
+  "data/slab_axisymmetric_tangent_slab.csv",
+)
+#let axial-cylinder() = axial-heating("data/cylinder_axial.csv", "data/cylinder_tangent_slab.csv")
 
 // Heating against radius in each axial band, from a `radial.csv` of shell means
 // and a `radial.json` of bands, each band with its tangent-slab mean, which is

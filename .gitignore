@@ -20,8 +20,8 @@ wheels/
 *.vtu
 
 # Example artifacts: notebook output, compiled figures, and the mesh cache
-examples/*/data/
-examples/*/figures/
+examples/**/data/
+examples/**/figures/
 examples/meshes/
 
 # Doc files from typ

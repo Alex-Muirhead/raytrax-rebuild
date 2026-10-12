@@ -14,6 +14,7 @@ with app.setup:
 
     from raytrax import transport
     from raytrax_examples import colours, export, profiles, render
+    from raytrax_examples.analytic import tangent_slab_point
     from raytrax_examples.cases import cylinder, slab
     from raytrax_examples.typst import figure
 
@@ -260,7 +261,7 @@ def _():
     ## Profiles
 
     Along x, the heating is averaged over 25 bins of equal width and set
-    against the tangent-slab mean over each bin. Across the axis, it is
+    against the tangent-slab solution. Across the axis, it is
     averaged over shells of equal radial width in four axial bands, each of
     which should be flat at the band's tangent-slab mean. A shell that holds no
     cell centroid is written as NaN and left as a gap.
@@ -283,9 +284,13 @@ def _(
         ("slab_axisymmetric", slab_axisymmetric, heating_axisymmetric),
         ("cylinder", cylinder_fine, heating_cylinder),
     ):
-        _edges, _profile, _exact = profiles.axial_profile(_case, _heating, kappa.value)
+        _edges, _profile, _ = profiles.axial_profile(_case, _heating, kappa.value)
+        export.save_csv(DATA / f"{_name}_axial.csv", (_edges[:-1], _edges[1:], _profile), "lo,hi,heating")
+        _x = np.linspace(_edges[0], _edges[-1], 601)
         export.save_csv(
-            DATA / f"{_name}_axial.csv", (_edges[:-1], _edges[1:], _profile, _exact), "lo,hi,heating,tangent_slab"
+            DATA / f"{_name}_tangent_slab.csv",
+            (_x, tangent_slab_point(kappa.value, _edges[0], _x)),
+            "x,tangent_slab",
         )
 
     mo.vstack(
