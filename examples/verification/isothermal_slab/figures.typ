@@ -1,6 +1,6 @@
 // Figures of the isothermal-slab verification, drawn from isothermal_verification.py's data/.
 
-#import "../style.typ": *
+#import "../../style.typ": *
 
 #let incident-label = [Incident radiation [#quan[MW/m^2]]]
 

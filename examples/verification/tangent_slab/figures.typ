@@ -1,6 +1,6 @@
 // Figures of the tangent-slab verification, drawn from tangent_slab_verification.py's data/.
 
-#import "../style.typ": *
+#import "../../style.typ": *
 
 // The hot end emits 1 per unit area, so heating per unit volume is in 1/m.
 #let heating-label = [Volumetric heating [#quan[/m]]]
