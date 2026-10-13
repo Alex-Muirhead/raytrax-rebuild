@@ -170,7 +170,7 @@ CONTINUOUS = {
 CYCLE = QUALITATIVE["petroff10"]
 # The matplotlib names of the colour maps for a field of one sign, and for a
 # signed field centred on zero.
-SEQUENTIAL = "lilaq.plasma"
+SEQUENTIAL = "lilaq.magma"
 DIVERGING = "lilaq.vik"
 
 for _name, _colours in QUALITATIVE.items():

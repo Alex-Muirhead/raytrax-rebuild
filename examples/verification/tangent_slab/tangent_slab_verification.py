@@ -106,13 +106,24 @@ def solve(case, rays):
 
 
 @app.cell
-def _(cylinder_coarse, cylinder_fine, num_rays, slab_axisymmetric, slab_planar):
+def _(
+    cylinder_coarse,
+    cylinder_fine,
+    num_rays,
+    slab_axisymmetric,
+    slab_planar,
+):
     rays = int(num_rays.value)
     heating_planar = solve(slab_planar, rays)
     heating_axisymmetric = solve(slab_axisymmetric, rays)
     heating_cylinder = solve(cylinder_fine, rays)
     heating_coarse = solve(cylinder_coarse, rays)
-    return heating_axisymmetric, heating_coarse, heating_cylinder, heating_planar
+    return (
+        heating_axisymmetric,
+        heating_coarse,
+        heating_cylinder,
+        heating_planar,
+    )
 
 
 @app.cell
@@ -304,7 +315,13 @@ def _(
 
 
 @app.cell
-def _(cylinder_fine, heating_axisymmetric, heating_cylinder, kappa, slab_axisymmetric):
+def _(
+    cylinder_fine,
+    heating_axisymmetric,
+    heating_cylinder,
+    kappa,
+    slab_axisymmetric,
+):
     for _name, _case, _heating in (
         ("slab_axisymmetric", slab_axisymmetric, heating_axisymmetric),
         ("cylinder", cylinder_fine, heating_cylinder),

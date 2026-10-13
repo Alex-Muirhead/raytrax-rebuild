@@ -33,7 +33,8 @@
 }
 
 // Incident radiation on the finest grid, for one reading and one boundary kind.
-#let incident(reading, boundary) = {
+#let incident(reading, boundary, width: 6cm) = {
+  show: lq.layout
   let stem = "data/incident_" + reading + "_" + boundary
   let png = read(stem + ".png", encoding: none)
   let meta = json(stem + ".json")
@@ -44,14 +45,14 @@
     align: horizon,
     lq.diagram(
       ..extent(meta),
-      width: 6cm,
+      width: width,
       height: auto,
       xlabel: $x$,
       ylabel: vertical.at(reading),
       colormesh,
-      strip-outline(meta),
+      // strip-outline(meta),
     ),
-    lq.colorbar(colormesh, label: incident-label, height: 5cm),
+    lq.colorbar(colormesh, label: incident-label, height: width),
   )
 }
 

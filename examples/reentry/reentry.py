@@ -115,9 +115,15 @@ def _():
 
 @app.cell
 def _():
+    mo.ui.text()
+    return
+
+
+@app.cell
+def _():
     temperature = mo.ui.slider(5000, 15000, 500, value=10000, label="Shock temperature (K)")
     kappa = mo.ui.slider(0.1, 20.0, 0.1, value=2.0, label="Absorptivity kappa (1/m)")
-    num_rays = mo.ui.dropdown(["200000", "1000000", "4000000"], value="1000000", label="Rays")
+    num_rays = mo.ui.number(label="Rays", value=1e6)
     mo.hstack([temperature, kappa, num_rays], justify="start", gap=2)
     return kappa, num_rays, temperature
 
