@@ -51,9 +51,15 @@
   // last value repeats at the high edge of the last bin.
   let step-x = bins.lo + (bins.hi.last(),)
   let step-y = bins.flux + (bins.flux.last(),)
-  // Framed on the pooled curve: the per-face points run off the top near the
+  // One standard deviation of the face fluxes either side of the mean.
+  let band(sign) = {
+    let edge = bins.flux.zip(bins.std).map(((flux, std)) => flux + sign * std)
+    edge + (edge.last(),)
+  }
+  let (low, high) = (band(-1), band(1))
+  // Framed on the mean curve: the per-face points run off the top near the
   // nose, where the rings they revolve into carry no area.
-  let ceiling = 1.2 * calc.max(..bins.flux)
+  let ceiling = 1.2 * calc.max(..high)
   lq.diagram(
     width: 10cm,
     height: 6cm,
@@ -70,13 +76,21 @@
       clip: true,
       label: [per face],
     ),
+    lq.fill-between(
+      step-x,
+      low,
+      y2: high,
+      step: end,
+      fill: palette.blue.transparentize(70%),
+      label: [$plus.minus 1$ standard deviation],
+    ),
     lq.plot(
       step-x,
       step-y,
       step: end,
       mark: none,
       stroke: 1.2pt + palette.blue,
-      label: [pooled over the bin],
+      label: [mean heating],
     ),
     lq.vlines(shoulder, stroke: (paint: palette.grey, dash: "dotted")),
     lq.place(shoulder, ceiling, align: right + top, pad(right: 3pt, top: 3pt, text(size: 0.8em)[shoulder])),

@@ -32,7 +32,7 @@ with app.setup:
 
     # The forebody, on the scale of the stagnation standoff: (xmin, ymin, xmax, ymax).
     ZOOM_BOUNDS = (-0.04, -0.005, 0.14, 0.26)
-    # Bins of equal arc length along the wall, for the pooled wall flux.
+    # Bins of equal arc length along the wall, for the mean wall flux.
     WALL_BINS = 40
 
     # The capsule is solid and unmeshed, so it is drawn as a grey silhouette.
@@ -326,12 +326,21 @@ def _(face_deposit, flux, geom, mesh, wall):
     bin_edges = np.linspace(0.0, surface_distance[-1] + face_length[-1] / 2, WALL_BINS + 1)
     bin_index = np.clip(np.digitize(surface_distance, bin_edges) - 1, 0, WALL_BINS - 1)
     bin_energy = np.bincount(bin_index, face_deposit[wall_faces], WALL_BINS)
-    bin_area = np.bincount(bin_index, geom.faces.area[wall_faces], WALL_BINS)
-    pooled_flux = bin_energy / bin_area
+    face_area = geom.faces.area[wall_faces]
+    bin_area = np.bincount(bin_index, face_area, WALL_BINS)
+    mean_flux = bin_energy / bin_area
+
+    # The variance of the face fluxes in each bin about that mean, weighted by area as the mean is.
+    residual = flux[wall_faces] - mean_flux[bin_index]
+    variance = np.bincount(bin_index, face_area * residual**2, WALL_BINS) / bin_area
 
     # Written in MW/m^2, the unit the figure shows.
     export.save_csv(DATA / "wall_flux.csv", (surface_distance, flux[wall_faces] / 1e6), "s,flux")
-    export.save_csv(DATA / "wall_flux_binned.csv", (bin_edges[:-1], bin_edges[1:], pooled_flux / 1e6), "lo,hi,flux")
+    export.save_csv(
+        DATA / "wall_flux_binned.csv",
+        (bin_edges[:-1], bin_edges[1:], mean_flux / 1e6, np.sqrt(variance) / 1e6),
+        "lo,hi,flux,std",
+    )
     export.save_json(DATA / "wall_flux.json", {"shoulder": float(shoulder)})
 
     mo.image(figure(FIGURES, "wall-flux"))
@@ -348,7 +357,8 @@ def _():
     The grey scatter near the nose is sampling, not physics. A face there
     revolves into a ring of almost no area, so hardly any rays land on it and
     its own flux is one or two deposits over almost nothing. The blue curve is
-    the estimator to read.
+    the estimator to read, and the band around it is one standard deviation of
+    the face fluxes in the bin, weighted by face area as the mean is.
 
     ### The binning
 
